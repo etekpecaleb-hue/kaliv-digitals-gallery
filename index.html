@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>CachiCloud C3</title>
+    <meta name="description" content="CachiCloud C3 gallery showcase: an interactive 3D photo globe and stream." />
+    <meta name="theme-color" content="#04060d" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-60 -60 120 120'%3E%3Ccircle r='60' fill='%2304060d'/%3E%3Cpath d='M4.57 -22.29A30 30 0 1 0 4.57 22.29' fill='none' stroke='%23e8efff' stroke-width='10'/%3E%3Cpath d='M16.91 -21.34A15 15 0 1 1 27.9 -0.23M27.9 0.23A15 15 0 1 1 16.91 21.34' fill='none' stroke='%239cc7ff' stroke-width='10'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./assets/index-DznvpmUj.css" />
+    <script type="module" src="./assets/index-eUbDrL-0.js"></script>
+  </head>
+  <body>
+<h1 class="sr-only">CachiCloud C3 photo gallery</h1>
+
+    <canvas class="scene" id="scene" tabindex="0" role="img" aria-label="Photo globe. Drag or use the arrow keys to rotate, scroll or pinch to zoom, press Enter to open the photo in view."></canvas>
+
+    <!-- Gallery heads-up display -->
+    <header class="hud hud-top" id="hud-top">
+      <a class="brand" href="#globe" id="brand" aria-label="CachiCloud C3, back to the globe">
+        <svg class="brand__mark" viewBox="-60 -60 120 120" aria-hidden="true">
+          <circle r="52" class="brand__ring" />
+          <path d="M4.57 -22.29A30 30 0 1 0 4.57 22.29" class="brand__c" />
+          <path d="M16.91 -21.34A15 15 0 1 1 27.9 -0.23" class="brand__3" />
+          <path d="M27.9 0.23A15 15 0 1 1 16.91 21.34" class="brand__3" />
+        </svg>
+        <span class="brand__word">CachiCloud</span>
+        <span class="brand__tag mono">C3</span>
+      </a>
+      <div class="hud-top__actions">
+        <div class="modes" role="group" aria-label="Gallery view">
+          <button class="mode" type="button" id="mode-globe" aria-pressed="true" aria-label="Globe view" title="Globe view (G)">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" /><ellipse cx="8" cy="8" rx="2.6" ry="6.2" /><path d="M1.8 8h12.4" /></svg>
+            <span>Globe</span>
+          </button>
+          <button class="mode" type="button" id="mode-stream" aria-pressed="false" aria-label="Stream view" title="Stream view (S)">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="5.5" height="7" /><rect x="9" y="1.5" width="5.5" height="4" /><rect x="1.5" y="10.5" width="5.5" height="4" /><rect x="9" y="7.5" width="5.5" height="7" /></svg>
+            <span>Stream</span>
+          </button>
+        </div>
+        <button class="add" type="button" id="add-photos" aria-label="Add photos" title="Add photos from your device">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" /></svg>
+          <span>Add photos</span>
+        </button>
+        <input class="sr-only" type="file" id="file-input" accept="image/*" multiple tabindex="-1" aria-hidden="true" />
+      </div>
+    </header>
+
+    <div class="hud hud-frame" aria-hidden="true">
+      <span class="tick tick--tl"></span><span class="tick tick--tr"></span>
+      <span class="tick tick--bl"></span><span class="tick tick--br"></span>
+    </div>
+
+    <footer class="hud hud-bottom" id="hud-bottom">
+      <dl class="readout mono" id="readout">
+        <div class="readout__item"><dt>Frames</dt><dd id="ro-frames">00</dd></div>
+        <div class="readout__item"><dt id="ro-a-label">View</dt><dd id="ro-a">00.0°N 000.0°E</dd></div>
+        <div class="readout__item"><dt id="ro-b-label">Range</dt><dd id="ro-b">00.0</dd></div>
+        <div class="readout__item readout__item--wide"><dt id="ro-c-label">In view</dt><dd id="ro-c">—</dd></div>
+        <div class="readout__item readout__item--fps"><dt>FPS</dt><dd id="ro-fps">60</dd></div>
+      </dl>
+      <p class="hint mono" id="hint">Drag to rotate · Scroll to zoom · Select a photo to open it</p>
+    </footer>
+
+    <!-- Target brackets that lock onto the hovered globe panel -->
+    <div class="target" id="target" aria-hidden="true">
+      <span class="target__c target__c--tl"></span><span class="target__c target__c--tr"></span>
+      <span class="target__c target__c--bl"></span><span class="target__c target__c--br"></span>
+      <span class="target__label mono" id="target-label"></span>
+    </div>
+
+    <!-- Infinite scroll stream -->
+    <section class="stream" id="stream" aria-label="Photo stream. Scroll, drag or use the arrow keys to move through the photos." hidden>
+      <div class="stream__track" id="stream-track"></div>
+    </section>
+
+    <!-- Lightbox -->
+    <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-labelledby="lb-title" hidden>
+      <div class="lightbox__backdrop" id="lb-backdrop"></div>
+      <div class="lightbox__area" id="lb-area"></div>
+      <div class="lightbox__frame" id="lb-frame">
+        <img class="lightbox__img" id="lb-img" alt="" draggable="false" />
+        <span class="corner corner--tl"></span><span class="corner corner--tr"></span>
+        <span class="corner corner--bl"></span><span class="corner corner--br"></span>
+        <span class="lightbox__scan" id="lb-scan"></span>
+      </div>
+      <aside class="lightbox__meta" id="lb-meta">
+        <p class="lightbox__index mono"><span id="lb-index">Frame 01 / 32</span><span class="chip" id="lb-category">Orbit</span></p>
+        <h2 class="lightbox__title" id="lb-title">Title</h2>
+        <p class="lightbox__place" id="lb-place"></p>
+        <dl class="lightbox__data mono">
+          <div><dt>Size</dt><dd id="lb-size">—</dd></div>
+          <div><dt>Ratio</dt><dd id="lb-ratio">—</dd></div>
+          <div><dt>Tone</dt><dd><i class="swatch" id="lb-tone-swatch"></i><span id="lb-tone">—</span></dd></div>
+          <div><dt>Accent</dt><dd><i class="swatch" id="lb-accent-swatch"></i><span id="lb-accent">—</span></dd></div>
+          <div><dt>Image</dt><dd id="lb-res">Preview</dd></div>
+        </dl>
+        <p class="lightbox__credit" id="lb-credit"></p>
+        <div class="lightbox__nav">
+          <button class="lb-btn" type="button" id="lb-prev" aria-label="Previous photo">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 2.5L4.5 8l5.5 5.5" /></svg>
+          </button>
+          <button class="lb-btn" type="button" id="lb-next" aria-label="Next photo">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5L11.5 8 6 13.5" /></svg>
+          </button>
+          <p class="lightbox__keys mono">← → browse · Esc close</p>
+        </div>
+      </aside>
+      <button class="lb-btn lb-btn--close" type="button" id="lb-close" aria-label="Close photo">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" /></svg>
+      </button>
+    </div>
+
+    <div class="drop" id="drop" hidden>
+      <div class="drop__box"><p class="drop__title">Drop photos to add them</p><p class="drop__note mono">JPG · PNG · WebP · stays in this tab</p></div>
+    </div>
+    <div class="toast mono" id="toast" role="status" aria-live="polite"></div>
+
+    <noscript><p class="noscript">CachiCloud C3 needs JavaScript to show the gallery.</p></noscript>
+
+    <!-- FUI intro -->
+    <div class="intro" id="intro" aria-label="Loading CachiCloud C3">
+      <div class="intro__grid" aria-hidden="true"></div>
+      <div class="intro__beam" aria-hidden="true"></div>
+      <canvas class="intro__warp" id="intro-warp" aria-hidden="true"></canvas>
+
+      <svg class="intro__corner intro__corner--tl" viewBox="0 0 48 48" aria-hidden="true"><path d="M1 47V1h46" /></svg>
+      <svg class="intro__corner intro__corner--tr" viewBox="0 0 48 48" aria-hidden="true"><path d="M1 47V1h46" /></svg>
+      <svg class="intro__corner intro__corner--bl" viewBox="0 0 48 48" aria-hidden="true"><path d="M1 47V1h46" /></svg>
+      <svg class="intro__corner intro__corner--br" viewBox="0 0 48 48" aria-hidden="true"><path d="M1 47V1h46" /></svg>
+
+      <div class="intro__meta intro__meta--tl mono" aria-hidden="true">
+        <span data-scramble>CachiCloud // C3</span>
+        <span data-scramble class="dim">Gallery system v1.0</span>
+      </div>
+      <div class="intro__meta intro__meta--tr mono" aria-hidden="true">
+        <span id="intro-clock">00:00:00</span>
+        <span id="intro-zone" class="dim">UTC</span>
+      </div>
+
+      <div class="intro__center">
+        <svg class="reticle" id="reticle" viewBox="-112 -112 224 224" aria-hidden="true">
+          <g class="reticle__ticks"><circle r="97" /></g>
+          <g class="reticle__spin-b">
+            <path class="ring ring--arc" d="M82.69 -30.1A88 88 0 0 0 -56.57 -67.41" />
+            <path class="ring ring--arc" d="M-82.69 30.1A88 88 0 0 0 56.57 67.41" />
+          </g>
+          <circle class="ring ring--thin" r="80" />
+          <g class="reticle__spin-c"><path class="ring ring--accent" d="M72 0A72 72 0 0 0 55.16 -46.28" /></g>
+          <g class="reticle__cross">
+            <path class="ring" d="M0 -104v-6M104 0h6M0 104v6M-104 0h-6" />
+          </g>
+          <g class="reticle__labels">
+            <text x="0" y="-100" text-anchor="middle">000</text>
+            <text x="101" y="3" text-anchor="start">090</text>
+            <text x="0" y="106" text-anchor="middle">180</text>
+            <text x="-101" y="3" text-anchor="end">270</text>
+          </g>
+          <g class="emblem" id="emblem">
+            <path class="emblem__stroke emblem__c" d="M4.57 -22.29A30 30 0 1 0 4.57 22.29" />
+            <path class="emblem__stroke emblem__3" d="M16.91 -21.34A15 15 0 1 1 27.9 -0.23" />
+            <path class="emblem__stroke emblem__3" d="M27.9 0.23A15 15 0 1 1 16.91 21.34" />
+          </g>
+        </svg>
+        <div class="intro__word" id="intro-word" aria-hidden="true"></div>
+        <p class="intro__sub mono" id="intro-sub" aria-hidden="true">&nbsp;</p>
+      </div>
+
+      <div class="intro__log mono" id="intro-log" aria-hidden="true"></div>
+      <div class="intro__progress mono">
+        <p class="intro__pct" role="status" aria-live="off"><span id="intro-status">Loading</span> <span id="intro-pct">000</span>%</p>
+        <div class="intro__bar" aria-hidden="true"><i id="intro-bar"></i></div>
+        <button class="intro__skip" type="button" id="intro-skip">Skip intro <kbd>Esc</kbd></button>
+      </div>
+    </div>
+
+  </body>
+</html>
