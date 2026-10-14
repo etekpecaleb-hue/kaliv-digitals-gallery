@@ -1,8 +1,10 @@
 // The photo globe: curved photo panels in latitude rows over a blueprint core,
 // with an atmosphere glow, orbit rings, two satellites and polar emblem caps.
 // With Blueprint off it morphs into a seamless photo sphere (photoSphere.js).
-// Handles its own drag/pinch/wheel/keyboard input and, when `cameraControl`
-// is on, drives the camera.
+// The globe itself never turns (spin stays identity): the explorer camera
+// (src/nav/explorer.js) orbits it and owns the input. `attachCamera()` hands
+// it that controller for focus(), release() and viewCenter(); hover picking
+// reads `hoverPoint` and `interactive`, which the app sets every frame.
 import {
   AdditiveBlending,
   BackSide,
@@ -33,7 +35,7 @@ import {
 } from 'three'
 import { gsap } from 'gsap'
 import { clamp, damp, lerp, seededRandom, wrap } from '../core/math.js'
-import { fitLayout, latLonToXYZ, spreadIndices, viewFor } from './rowLayout.js'
+import { fitLayout, latLonToXYZ, spreadIndices } from './rowLayout.js'
 import { PhotoSphere } from './photoSphere.js'
 import {
   CORE_FRAGMENT,
@@ -51,12 +53,8 @@ const SIGNAL_HI = new Color('#9cc7ff')
 const PLACEHOLDER = new DataTexture(new Uint8Array([10, 18, 36, 255]), 1, 1)
 PLACEHOLDER.needsUpdate = true
 
-// Resting tilt: the globe leans towards the viewer a little.
-const REST_PITCH = 0.22
-const PITCH_LIMIT = 1.25
 const UP = new Vector3(0, 1, 0)
 
-const scratch = new Vector3()
 const satelliteA = new Vector3()
 const satelliteB = new Vector3()
 const morphEuler = new Euler()
@@ -220,8 +218,10 @@ export class PhotoGlobe {
     // the globe's world-space centre (the morph wraps panels around it)
     uCentre: { value: new Vector3() },
   }
-  view = { pitch: REST_PITCH, yaw: 0, distance: 18 }
-  goal = { pitch: REST_PITCH, yaw: 0, distance: 18 }
+  // unit vector from the globe's centre to the camera, refreshed every frame
+  viewDir = new Vector3(0, 0, 1)
+  // the camera controller (the explorer), see attachCamera()
+  controller = null
   // the blueprint's panels; `panels` is whichever set the current mode shows
   blueprintPanels = []
   sphere
@@ -236,7 +236,8 @@ export class PhotoGlobe {
   hovered = null
   front = null
   interactive = false
-  cameraControl = false
+  // hover picking is paused while the pointer drags
+  suppressHover = false
   fitDistance = 18
   stage
   store
@@ -250,23 +251,8 @@ export class PhotoGlobe {
   satellites
   raycaster = new Raycaster()
   pointer = new Vector2()
-  velocity = { pitch: 0, yaw: 0 }
-  pointers = new Map()
-  drag = {
-    active: false,
-    moved: false,
-    startX: 0,
-    startY: 0,
-    lastX: 0,
-    lastY: 0,
-    lastT: 0,
-    downT: 0,
-  }
-  pinch = { distance: 0, goal: 0 }
+  // the mouse over the canvas in CSS px ({ x, y }), or null
   hoverPoint = null
-  parallax = { x: 0, y: 0, tx: 0, ty: 0 }
-  lastInput = 0
-  focusing = false
   assembling = false
   minDistance = 8
   maxDistance = 30
@@ -332,7 +318,12 @@ export class PhotoGlobe {
     this.root.visible = false
     stage.onResize(() => this.updateFit())
     stage.onFrame((time, dt) => this.update(time, dt))
-    this.bindInput()
+  }
+
+  // The camera controller: { lookAtLatLon(lat, lon, { distance, duration }),
+  // release(distance), viewCenter(), orbitQuaternion }.
+  attachCamera(controller) {
+    this.controller = controller
   }
 
   // (Re)creates every panel for the store's current photos.
@@ -411,8 +402,8 @@ export class PhotoGlobe {
     if (this.mode === 'sphere') return this.assembleSphere(tl, duration)
     this.assembling = true
     const random = seededRandom(17)
-    // direction from the globe centre to the camera, in globe space
-    const toCamera = new Vector3(0, 0, 1).applyEuler(new Euler(-this.view.pitch, -this.view.yaw, 0, 'ZYX'))
+    // direction from the globe centre to the camera
+    const toCamera = this.updateViewDir()
     for (const panel of this.blueprintPanels) {
       const { mesh, basePosition, baseQuaternion } = panel
       const from = panel.normal
@@ -471,32 +462,19 @@ export class PhotoGlobe {
     return tl
   }
 
-  // Turns `panel` to face the camera (and zooms in on it unless `zoom` is false).
+  // Turns `panel` to face the camera (and zooms in on it unless `zoom` is
+  // false): the camera orbits round to it. Resolves when it settles.
   focus(panel, zoom = true) {
-    const { pitch, yaw } = viewFor(panel.lat, panel.lon, this.view.yaw)
-    const target = { pitch, yaw, distance: zoom ? this.focusDistance(panel) : this.view.distance }
-    this.focusing = true
-    this.velocity.pitch = this.velocity.yaw = 0
-    return new Promise((resolve) => {
-      gsap.to(this.view, {
-        ...target,
-        duration: this.reduced ? 0.01 : 0.85,
-        ease: 'power3.inOut',
-        overwrite: true,
-        onComplete: () => {
-          Object.assign(this.goal, target)
-          this.focusing = false
-          resolve()
-        },
-      })
+    if (!this.controller) return Promise.resolve()
+    return this.controller.lookAtLatLon(panel.lat, panel.lon, {
+      distance: zoom ? this.focusDistance(panel) : undefined,
+      duration: 0.85,
     })
   }
 
   // After a focus: ease back out to (at least nearly) the resting distance.
   release() {
-    const distance = Math.max(this.goal.distance, this.fitDistance * 0.92)
-    this.goal.distance = clamp(distance, this.minDistance, this.maxDistance)
-    this.lastInput = this.stage.time
+    this.controller?.release(this.fitDistance * 0.92)
   }
 
   // Dims every panel except `panel` (null clears).
@@ -534,7 +512,7 @@ export class PhotoGlobe {
     let bestFacing = -Infinity
     for (const panel of this.panels) {
       if (panel.photo !== photo) continue
-      const facing = panel.normal.clone().applyQuaternion(this.spin.quaternion).z
+      const facing = panel.normal.dot(this.viewDir)
       if (facing > bestFacing) {
         best = panel
         bestFacing = facing
@@ -543,13 +521,22 @@ export class PhotoGlobe {
     return best
   }
 
+  // { lat, lon } of the globe point facing the camera.
   viewCenter() {
-    return { lat: this.view.pitch, lon: -this.view.yaw }
+    return this.controller?.viewCenter() ?? { lat: 0, lon: 0 }
   }
 
-  // 1 = facing the camera head-on, -1 = on the far side.
+  // 1 = facing the camera head-on, -1 = on the far side. (The globe never
+  // turns, so panel normals are world directions.)
   facing(panel) {
-    return panel.normal.clone().applyQuaternion(this.spin.quaternion).z
+    return panel.normal.dot(this.viewDir)
+  }
+
+  // Direction from the globe's centre to the camera.
+  updateViewDir() {
+    this.viewDir.subVectors(this.stage.camera.position, this.root.position)
+    if (this.viewDir.lengthSq() < 1e-12) this.viewDir.set(0, 0, 1)
+    return this.viewDir.normalize()
   }
 
   // Swaps loaded textures into panels that were still showing their tone.
@@ -572,8 +559,7 @@ export class PhotoGlobe {
     const hidden = this.mode === 'sphere' ? this.blueprintPanels : this.sphere.cells
     for (const panel of hidden) panel.mesh.material.uniforms.uReveal.value = 1
     // nearest the camera first; the whole wave stays under ~2.5 s
-    const spin = this.spin.quaternion
-    const facing = (panel) => scratch.copy(panel.normal).applyQuaternion(spin).z
+    const facing = (panel) => panel.normal.dot(this.viewDir)
     const shown = this.panels.filter((panel) => wanted.has(panel.photo)).sort((a, b) => facing(b) - facing(a))
     const stagger = Math.min(0.06, 2.4 / Math.max(1, shown.length))
     shown.forEach((panel, i) => {
@@ -767,7 +753,7 @@ export class PhotoGlobe {
   assembleSphere(tl, duration) {
     this.assembling = true
     const random = seededRandom(23)
-    const toCamera = new Vector3(0, 0, 1).applyEuler(new Euler(-this.view.pitch, -this.view.yaw, 0, 'ZYX'))
+    const toCamera = this.updateViewDir()
     for (const cell of this.sphere.cells) {
       const { mesh, normal } = cell
       const from = 9 + random() * 16
@@ -799,17 +785,6 @@ export class PhotoGlobe {
     return tl
   }
   // ---------------------------------------------------------------------------
-
-  rotateBy(yaw, pitch) {
-    this.goal.yaw += yaw
-    this.goal.pitch = clamp(this.goal.pitch + pitch, -PITCH_LIMIT, PITCH_LIMIT)
-    this.lastInput = this.stage.time
-  }
-
-  zoomBy(factor) {
-    this.goal.distance = clamp(this.goal.distance * factor, this.minDistance, this.maxDistance)
-    this.lastInput = this.stage.time
-  }
 
   // Bigger panels on small screens so they stay legible.
   baseOptions() {
@@ -895,173 +870,20 @@ export class PhotoGlobe {
     )
   }
 
-  // Resting distance at which the whole globe fits the viewport (with margin),
-  // plus the zoom limits derived from it.
+  // Resting distance at which the whole globe fits the viewport (with
+  // margin), and the closest the camera may come. (Zooming out continues
+  // into space; the explorer refits a camera left at rest.)
   updateFit() {
     const tanHalf = Math.tan(MathUtils.degToRad(this.stage.camera.fov / 2))
     const aspect = this.stage.width / this.stage.height
     const fill = aspect < 1 ? 1 : 0.84
-    const previous = this.fitDistance
-    const atRest = Math.abs(this.goal.distance - previous) < 0.6
     this.fitDistance = (RADIUS * 1.12) / (fill * tanHalf * Math.min(1, aspect))
     this.minDistance = 7.4
     this.maxDistance = this.fitDistance * 1.7
-    if (atRest && !this.focusing) this.goal.distance = this.fitDistance
-    this.goal.distance = clamp(this.goal.distance, this.minDistance, this.maxDistance)
   }
 
   get restDistance() {
     return this.fitDistance
-  }
-
-  bindInput() {
-    const canvas = this.stage.canvas
-    canvas.addEventListener('pointerdown', (event) => {
-      if (!this.interactive) return
-      canvas.setPointerCapture(event.pointerId)
-      this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
-      this.lastInput = this.stage.time
-      if (this.pointers.size === 1) {
-        Object.assign(this.drag, {
-          active: true,
-          moved: false,
-          startX: event.clientX,
-          startY: event.clientY,
-          lastX: event.clientX,
-          lastY: event.clientY,
-          lastT: performance.now(),
-          downT: performance.now(),
-        })
-        this.velocity.yaw = this.velocity.pitch = 0
-      } else if (this.pointers.size === 2) {
-        const [a, b] = [...this.pointers.values()]
-        this.pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y), goal: this.goal.distance }
-        this.drag.moved = true
-      }
-    })
-
-    canvas.addEventListener('pointermove', (event) => {
-      if (event.pointerType === 'mouse') {
-        this.hoverPoint = { x: event.clientX, y: event.clientY }
-        this.parallax.tx = (event.clientX / this.stage.width - 0.5) * 2
-        this.parallax.ty = (event.clientY / this.stage.height - 0.5) * 2
-      }
-      const pointer = this.pointers.get(event.pointerId)
-      if (!pointer || !this.interactive) return
-      pointer.x = event.clientX
-      pointer.y = event.clientY
-      this.lastInput = this.stage.time
-
-      if (this.pointers.size === 2) {
-        const [a, b] = [...this.pointers.values()]
-        const distance = Math.hypot(a.x - b.x, a.y - b.y)
-        if (this.pinch.distance > 0) {
-          this.goal.distance = clamp(
-            (this.pinch.goal * this.pinch.distance) / distance,
-            this.minDistance,
-            this.maxDistance,
-          )
-        }
-        return
-      }
-
-      if (!this.drag.active) return
-      const now = performance.now()
-      const dx = event.clientX - this.drag.lastX
-      const dy = event.clientY - this.drag.lastY
-      if (Math.hypot(event.clientX - this.drag.startX, event.clientY - this.drag.startY) > 6) {
-        this.drag.moved = true
-        canvas.classList.add('is-dragging')
-      }
-      // drag feels the same at any zoom: slower when closer in
-      const speed = 0.0052 * (this.view.distance / this.fitDistance)
-      this.goal.yaw += dx * speed
-      this.goal.pitch = clamp(this.goal.pitch + dy * speed, -PITCH_LIMIT, PITCH_LIMIT)
-      const dt = Math.max(1, now - this.drag.lastT) / 1000
-      this.velocity.yaw = damp(this.velocity.yaw, (dx * speed) / dt, 18, dt)
-      this.velocity.pitch = damp(this.velocity.pitch, (dy * speed) / dt, 18, dt)
-      this.drag.lastX = event.clientX
-      this.drag.lastY = event.clientY
-      this.drag.lastT = now
-    })
-
-    const end = (event) => {
-      if (!this.pointers.has(event.pointerId)) return
-      this.pointers.delete(event.pointerId)
-      if (this.pointers.size > 0) {
-        // pinch ended: keep dragging with the remaining finger without a jump
-        const [remaining] = [...this.pointers.values()]
-        this.drag.lastX = remaining.x
-        this.drag.lastY = remaining.y
-        return
-      }
-      canvas.classList.remove('is-dragging')
-      const tap = !this.drag.moved && performance.now() - this.drag.downT < 600
-      this.drag.active = false
-      this.drag.moved = false
-      // a drag that stopped before release shouldn't fling
-      if (performance.now() - this.drag.lastT > 90) this.velocity.yaw = this.velocity.pitch = 0
-      if (this.reduced) this.velocity.yaw = this.velocity.pitch = 0
-      if (tap && event.type === 'pointerup' && this.interactive) {
-        const panel = this.pick(event.clientX, event.clientY)
-        if (panel) this.onSelect(panel)
-      }
-    }
-    canvas.addEventListener('pointerup', end)
-    canvas.addEventListener('pointercancel', end)
-    canvas.addEventListener('pointerleave', (event) => {
-      if (event.pointerType === 'mouse') {
-        this.hoverPoint = null
-        this.parallax.tx = this.parallax.ty = 0
-      }
-    })
-
-    addEventListener(
-      'wheel',
-      (event) => {
-        if (!this.interactive || event.target?.closest?.('.lightbox, .intro, .sheet')) return
-        event.preventDefault()
-        const delta = event.deltaMode === 1 ? event.deltaY * 32 : event.deltaY
-        this.zoomBy(Math.exp(clamp(delta, -200, 200) * 0.0012))
-      },
-      { passive: false },
-    )
-
-    canvas.addEventListener('keydown', (event) => {
-      if (!this.interactive) return
-      const step = 0.32
-      const handled = (() => {
-        switch (event.key) {
-          case 'ArrowLeft':
-            this.rotateBy(step, 0)
-            return true
-          case 'ArrowRight':
-            this.rotateBy(-step, 0)
-            return true
-          case 'ArrowUp':
-            this.rotateBy(0, step * 0.7)
-            return true
-          case 'ArrowDown':
-            this.rotateBy(0, -step * 0.7)
-            return true
-          case '+':
-          case '=':
-            this.zoomBy(0.85)
-            return true
-          case '-':
-          case '_':
-            this.zoomBy(1.18)
-            return true
-          case 'Enter':
-          case ' ':
-            if (this.front) this.onSelect(this.front)
-            return true
-          default:
-            return false
-        }
-      })()
-      if (handled) event.preventDefault()
-    })
   }
 
   // The front-facing panel under a screen point, or null.
@@ -1073,52 +895,26 @@ export class PhotoGlobe {
     const hit = this.raycaster.intersectObjects(group.children, false)[0]
     if (!hit) return null
     const panel = this.panels[hit.object.userData.panel]
-    return panel.normal.clone().applyQuaternion(this.spin.quaternion).z > 0.15 ? panel : null
+    return panel.normal.dot(this.viewDir) > 0.15 ? panel : null
   }
 
   setHover(panel) {
     if (panel === this.hovered) return
     this.hovered = panel
-    this.stage.canvas.classList.toggle('is-pointing', panel !== null)
   }
 
   update(time, dt) {
     this.shared.uTime.value = time
     if (!this.root.visible) return
     this.shared.uCentre.value.copy(this.root.position)
+    this.updateViewDir()
+    // the blueprint rings keep their old screen-fixed tilt: they ride on the
+    // camera's orbit rotation (frozen while free-flying)
+    if (this.controller) this.extras.quaternion.copy(this.controller.orbitQuaternion)
 
-    if (!this.drag.active && !this.focusing) {
-      // inertia after a fling
-      this.goal.yaw += this.velocity.yaw * dt
-      this.goal.pitch = clamp(this.goal.pitch + this.velocity.pitch * dt, -PITCH_LIMIT, PITCH_LIMIT)
-      const decay = Math.exp(-dt * 2.6)
-      this.velocity.yaw *= decay
-      this.velocity.pitch *= decay
-      // idle drift after 3.5 s without input
-      if (this.interactive && !this.reduced && time - this.lastInput > 3.5) {
-        this.goal.yaw -= dt * 0.06
-        this.goal.pitch = damp(this.goal.pitch, REST_PITCH, 0.5, dt)
-      }
-    }
-    if (!this.focusing) {
-      this.view.yaw = damp(this.view.yaw, this.goal.yaw, 7, dt)
-      this.view.pitch = damp(this.view.pitch, this.goal.pitch, 7, dt)
-      this.view.distance = damp(this.view.distance, this.goal.distance, 5, dt)
-    }
-    this.spin.rotation.set(this.view.pitch, this.view.yaw, 0)
-
-    if (this.cameraControl) {
-      const camera = this.stage.camera
-      this.parallax.x = damp(this.parallax.x, this.parallax.tx, 2.5, dt)
-      this.parallax.y = damp(this.parallax.y, this.parallax.ty, 2.5, dt)
-      const sway = this.reduced ? 0 : 0.5
-      camera.position.set(this.parallax.x * sway, -this.parallax.y * sway, this.view.distance)
-      camera.lookAt(0, 0, 0)
-    }
-
-    if (this.interactive && !this.drag.moved && this.hoverPoint) {
+    if (this.interactive && !this.suppressHover && this.hoverPoint) {
       this.setHover(this.pick(this.hoverPoint.x, this.hoverPoint.y))
-    } else if (!this.interactive || this.drag.moved) {
+    } else if (!this.interactive || this.suppressHover) {
       this.setHover(null)
     }
 
@@ -1138,9 +934,9 @@ export class PhotoGlobe {
     if (this.morph.t > 0) this.sphere.update(dt, this.hovered, !this.assembling)
 
     let frontFacing = -Infinity
-    const spin = this.spin.quaternion
+    const viewDir = this.viewDir
     for (const panel of this.panels) {
-      const facing = scratch.copy(panel.normal).applyQuaternion(spin).z
+      const facing = panel.normal.dot(viewDir)
       if (facing > frontFacing) {
         frontFacing = facing
         this.front = panel
@@ -1169,7 +965,7 @@ export class PhotoGlobe {
 
     if (this.polarMaterials.length === 2) {
       // each cap shows only while its pole tips towards the camera
-      const poleFacing = scratch.set(0, 1, 0).applyQuaternion(spin).z
+      const poleFacing = viewDir.y
       this.polarMaterials[0].opacity = 0.85 * fade * MathUtils.smoothstep(poleFacing, 0.3, 0.75)
       this.polarMaterials[1].opacity = 0.85 * fade * MathUtils.smoothstep(-poleFacing, 0.3, 0.75)
     }

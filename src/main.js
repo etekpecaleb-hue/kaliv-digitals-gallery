@@ -1,5 +1,10 @@
-// Bootstrap: builds the stage, starfield, photo store, globe, HUD, lightbox,
-// Photos panel and intro, and wires them together.
+// Bootstrap: builds the stage, starfield, photo store, globe, the solar
+// system round it, the explorer camera, HUD, lightbox, panels and intro, and
+// wires them together.
+//
+// Frame order (stage.onFrame priorities): the solar system moves (-30), the
+// explorer places the camera (-20), the app routes globe input (-15), then
+// everything that reads the camera (globe, starfield, labels, HUD).
 import './styles/main.css'
 import { gsap } from 'gsap'
 import { ScrambleTextPlugin } from 'gsap/ScrambleTextPlugin'
@@ -10,7 +15,15 @@ import { PHOTOS } from './data/photos.js'
 import { MAX_FILES, PhotoStore, toPhoto } from './gallery/photoStore.js'
 import { PhotoGlobe } from './gallery/globe.js'
 import { Intro } from './intro/intro.js'
+import { Explorer, HOME_NEAR } from './nav/explorer.js'
+import { Belts } from './space/belts.js'
+import { SpaceEffects } from './space/effects.js'
+import { createPlanetVisuals } from './space/planets.js'
+import { Ships } from './space/ships.js'
+import { Sky } from './space/sky.js'
+import { SolarSystem } from './space/solarSystem.js'
 import { Starfield } from './space/starfield.js'
+import { SunCorona } from './space/sun.js'
 import { setupFileDrop } from './ui/fileDrop.js'
 import { Hud } from './ui/hud.js'
 import { Lightbox } from './ui/lightbox.js'
@@ -58,7 +71,7 @@ function showNoWebGL() {
   document.body.append(message)
 }
 
-function boot() {
+async function boot() {
   let stage
   try {
     stage = new Stage(canvas)
@@ -83,6 +96,98 @@ function boot() {
   hud.setBlueprint(globe.blueprint)
   textures.then(() => globe.refreshTextures())
 
+  // The solar system round the gallery. Planet maps bake lazily on the GPU,
+  // a strip per frame, nearest first; the system stays hidden until the
+  // intro hands over, so the intro looks exactly as before.
+  const { renderer, scene, camera, coarse } = stage
+  const buildStart = performance.now()
+  const visuals = await createPlanetVisuals({ renderer, coarse })
+  const system = new SolarSystem({ scene, renderer, camera, coarse, reduced, visuals })
+  const sky = system.addSystem(new Sky(system))
+  const corona = system.addSystem(new SunCorona(system))
+  for (const Subsystem of [Belts, Ships, SpaceEffects]) system.addSystem(new Subsystem(system))
+  system.group.visible = false
+  const buildMs = performance.now() - buildStart
+  // Where the driver compiles shaders in the background, prepare the
+  // system's programs during the intro so the hand-over doesn't hitch.
+  if (renderer.extensions.has('KHR_parallel_shader_compile')) {
+    setTimeout(() => {
+      if (!intro.active) return
+      system.group.visible = true
+      renderer.compileAsync(scene, camera).catch(() => {})
+      system.group.visible = false
+    }, 600)
+  }
+  stage.onFrame((time, dt) => {
+    // while the intro plays, bakes only run on frames with time to spare, so
+    // they never slow the intro down (its timeline stretches on slow frames)
+    visuals.baker.paused = intro.active && dt > 1 / 40
+    system.update(time, dt)
+  }, -30)
+
+  // the planet maps baked so far, for the intro's Worlds line
+  function worldsStatus() {
+    const jobs = visuals.baker.jobs
+    const done = jobs.reduce((count, job) => count + (job.done ? 1 : 0), 0)
+    return done < jobs.length ? `12 + sun + moon · ${done}/${jobs.length}` : '12 + sun + moon · mapped'
+  }
+
+  function showSpace() {
+    system.group.visible = true
+    gsap.fromTo(sky.uniforms.uOpacity, { value: 0 }, { value: 1, duration: reduced ? 0.3 : 1.8, ease: 'power1.inOut' })
+    gsap.fromTo(corona.uniforms.uGlow, { value: 0 }, { value: 1, duration: reduced ? 0.3 : 1.6, ease: 'power1.inOut' })
+  }
+
+  // panels can be picked once the globe has assembled
+  let panelsReady = false
+  let selecting = false
+
+  const explorer = new Explorer({
+    stage,
+    system,
+    globe,
+    reduced,
+    isBlocked: () => intro.active || lightbox.isOpen || selecting,
+    onTap: (x, y) => routeTap(x, y),
+  })
+  globe.attachCamera(explorer)
+  stage.onFrame((time, dt) => explorer.update(time, dt), -20)
+
+  // Taps: the globe's panels first when at home and close, then worlds/ships.
+  function routeTap(x, y) {
+    if (panelsReady && explorer.atHome) {
+      const panel = globe.pick(x, y)
+      if (panel) return void select(panel)
+    }
+    const target = explorer.pick(x, y)
+    if (!target) return
+    if (target === system.home) {
+      if (!explorer.atHome) void explorer.goHome()
+    } else if (target !== explorer.focus || explorer.mode === 'fly') {
+      void explorer.flyTo(target)
+    }
+  }
+
+  // Globe hover/picking only at home, close in, when nothing else has the input.
+  let hoverTarget = null
+  let lastHoverPick = 0
+  stage.onFrame((time) => {
+    const home = explorer.atHome
+    globe.interactive = panelsReady && home && !lightbox.isOpen && !selecting
+    globe.suppressHover = explorer.dragging
+    globe.hoverPoint = explorer.hovering ? explorer.hoverPoint : null
+    // the photo sphere's mild day/night follows the Sun
+    globe.shared.uSunDir.value.copy(system.sunPosition).normalize()
+    // worlds under the mouse (≤ 30 Hz) show the pointer cursor
+    if (explorer.enabled && !home && explorer.hovering && !explorer.dragging && !intro.active) {
+      if (time - lastHoverPick > 1 / 30) {
+        lastHoverPick = time
+        hoverTarget = explorer.pick(explorer.hoverPoint.x, explorer.hoverPoint.y)
+      }
+    } else hoverTarget = null
+    canvas.classList.toggle('is-pointing', Boolean(globe.hovered || hoverTarget))
+  }, -15)
+
   function openLightbox(photo, rect) {
     hud.setDimmed(true)
     lightbox.open(photo, rect)
@@ -105,16 +210,13 @@ function boot() {
       hud.setDimmed(false)
       globe.spotlight(null)
       globe.release()
-      globe.interactive = true
       shownPanel = null
     },
   })
 
-  let selecting = false
   async function select(panel) {
     if (!panel || selecting || lightbox.isOpen) return
     selecting = true
-    globe.interactive = false
     hud.trackTarget(null)
     shownPanel = panel
     globe.spotlight(panel)
@@ -123,24 +225,25 @@ function boot() {
     selecting = false
   }
 
-  // Intro exit: the camera dives in from z = 60 while the globe assembles.
+  // Intro exit: the explorer dives in from z = 60 while the globe assembles
+  // and space fades in around it.
   function handOver() {
     const tl = gsap.timeline()
-    const camera = stage.camera
-    const rest = globe.restDistance
     globe.refreshTextures()
-    globe.view.distance = globe.goal.distance = rest
-    globe.cameraControl = false
-    tl.to(camera.position, {
-      z: rest,
-      duration: reduced ? 0.01 : 2,
-      ease: 'expo.inOut',
-      onUpdate: () => camera.lookAt(0, 0, 0),
-    })
+    showSpace()
+    tl.add(explorer.dive({ duration: reduced ? 0.01 : 2, ease: 'expo.inOut' }), 0)
     tl.add(globe.assemble(1.5), reduced ? 0 : 0.35)
     tl.add(hud.reveal(), reduced ? 0 : 0.95)
-    tl.call(() => void (globe.interactive = true), [], reduced ? 0.4 : 1.9)
-    tl.call(() => void (globe.cameraControl = true), [], reduced ? 0.02 : 2)
+    tl.call(() => void (panelsReady = true), [], reduced ? 0.4 : 1.9)
+    tl.call(
+      () => {
+        explorer.enabled = true
+        explorer.lastInput = stage.time
+        globe.setSun(system.sunPosition, 1)
+      },
+      [],
+      reduced ? 0.02 : 2,
+    )
     return tl
   }
 
@@ -159,12 +262,23 @@ function boot() {
       stars: space.starCount,
       // the solar system around the gallery: planets and dwarf planets
       worlds: 12,
+      worldsStatus,
     },
     handOver,
   })
 
+  // what the HUD shows about the camera (reused, not reallocated)
+  const nav = { mode: 'home', range: 0, focusName: '', timeScale: 1, speed: 0, nearestName: '' }
   stage.onFrame((time) => {
-    if (!intro.active) hud.update(time, stage.fps, globe)
+    if (intro.active) return
+    const focus = explorer.travel?.to ?? explorer.focus
+    nav.mode = explorer.mode === 'fly' ? 'fly' : explorer.atHome || (focus === system.home && explorer.view.distance < HOME_NEAR) ? 'home' : 'space'
+    nav.range = explorer.mode === 'fly' ? explorer.nearest.surface : explorer.view.distance
+    nav.focusName = focus.name
+    nav.timeScale = system.timeScale
+    nav.speed = explorer.fly.speed
+    nav.nearestName = explorer.nearest.body?.name ?? '—'
+    hud.update(time, stage.fps, globe, nav)
   })
 
   // Blueprint on = the panel globe; off = the seamless photo sphere.
@@ -255,17 +369,21 @@ function boot() {
       return
     }
     const onPage = target === document.body || target === document.documentElement || target === canvas
-    if (!onPage || !globe.interactive) return
+    if (!onPage || !explorer.enabled || selecting || explorer.mode !== 'orbit') return
     const rotations = {
       ArrowLeft: [0.32, 0],
       ArrowRight: [-0.32, 0],
       ArrowUp: [0, 0.22],
       ArrowDown: [0, -0.22],
     }
+    const zooms = { '+': 0.85, '=': 0.85, '-': 1.18, _: 1.18 }
     if (rotations[event.key]) {
       event.preventDefault()
-      globe.rotateBy(...rotations[event.key])
-    } else if (event.key === 'Enter' && globe.front) {
+      explorer.rotateBy(...rotations[event.key])
+    } else if (zooms[event.key] && target === canvas) {
+      event.preventDefault()
+      explorer.zoomBy(zooms[event.key])
+    } else if ((event.key === 'Enter' || (event.key === ' ' && target === canvas)) && globe.front && globe.interactive) {
       event.preventDefault()
       select(globe.front)
     }
@@ -273,7 +391,11 @@ function boot() {
 
   // ?debug=1: a handle for QA scripts (renderer stats, mode switches)
   if (new URLSearchParams(location.search).has('debug')) {
-    window.gallery = { stage, globe, store, hud, lightbox, photosPanel, setBlueprint, replacePhotos }
+    const stats = () => {
+      const { render, memory } = stage.renderer.info
+      return { calls: render.calls, triangles: render.triangles, geometries: memory.geometries, textures: memory.textures, pixelRatio: stage.pixelRatio, near: stage.camera.near, buildMs: Math.round(buildMs), pendingBakes: visuals.baker.pending }
+    }
+    window.gallery = { stage, globe, store, hud, lightbox, photosPanel, setBlueprint, replacePhotos, system, explorer, visuals, stats }
   }
 
   intro.start()

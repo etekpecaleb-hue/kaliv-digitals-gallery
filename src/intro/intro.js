@@ -38,7 +38,8 @@ export class Intro {
   stopResize = null
 
   // options: { stage, space, reduced, fonts, textures, photosLoaded(),
-  //   photoCount, facts: { gpu, panels, rows, stars, worlds }, handOver() -> timeline }
+  //   photoCount, facts: { gpu, panels, rows, stars, worlds, worldsStatus() },
+  //   handOver() -> timeline }
   constructor(options) {
     this.options = options
     this.word = new WordParticles(options.stage, WORDMARK, FONT_DISPLAY)
@@ -260,7 +261,8 @@ export class Intro {
       },
       { label: 'Frames', value: () => `${pad(this.options.photosLoaded())}/${pad(photoCount)}` },
       { label: 'Globe', value: () => `${facts.panels} panels · ${facts.rows} rows` },
-      { label: 'Worlds', value: () => `${facts.worlds} + sun + moon` },
+      // live when the app reports the planet maps baking in the background
+      { label: 'Worlds', value: () => facts.worldsStatus?.() ?? `${facts.worlds} + sun + moon` },
       { label: 'Starfield', value: () => `${facts.stars} stars` },
       { label: 'Status', value: () => (this.ready ? 'ready' : 'loading') },
     ]

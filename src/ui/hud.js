@@ -10,6 +10,41 @@ import { formatLatLon, padIndex } from '../core/math.js'
 
 const byId = (id) => document.getElementById(id)
 
+// Readout labels and hints per camera mode: at home it reads like the globe,
+// in space it follows the focus, in free flight the ship.
+const MODES = {
+  home: {
+    labels: ['View', 'Range', 'In view'],
+    hint: 'Drag to rotate · Scroll to zoom · B blueprint · P photos',
+    coarseHint: 'Drag to rotate · Pinch to zoom · Tap a photo',
+  },
+  space: {
+    labels: ['Focus', 'Range', 'Time'],
+    hint: 'Drag to orbit · Scroll to zoom · M worlds · F fly · G home',
+    coarseHint: 'Drag to orbit · Pinch to zoom · Tap a world',
+  },
+  fly: {
+    labels: ['Flight', 'Speed', 'Nearest'],
+    hint: 'WASD move · Q/E down/up · Shift boost · Drag to look · Esc exit',
+    coarseHint: 'Stick to move · Drag to look',
+  },
+}
+
+function timeLabel(scale) {
+  return scale === 0 ? 'Paused' : `×${scale}`
+}
+
+// Scene units, short: 18.3, 342, 4.2k.
+function formatRange(value) {
+  if (value < 1000) return value.toFixed(value < 100 ? 1 : 0).padStart(4, '0')
+  return `${(value / 1000).toFixed(1)}k`
+}
+
+// Writes text only when it changed (no layout work for equal values).
+function write(el, text) {
+  if (el.textContent !== text) el.textContent = text
+}
+
 export class Hud {
   top = byId('hud-top')
   bottom = byId('hud-bottom')
@@ -32,6 +67,7 @@ export class Hud {
   }
   coarse
   store
+  mode = ''
   lastWrite = 0
   targetPanel = null
   toastTimer = 0
@@ -41,12 +77,21 @@ export class Hud {
     this.store = store
     this.coarse = coarse
     gsap.set([this.top, this.bottom, this.frame], { autoAlpha: 0 })
-    this.fields.aLabel.textContent = 'View'
-    this.fields.bLabel.textContent = 'Range'
-    this.fields.cLabel.textContent = 'In view'
-    this.hint.textContent = coarse
-      ? 'Drag to rotate · Pinch to zoom · Tap a photo'
-      : 'Drag to rotate · Scroll to zoom · B blueprint · P photos'
+    this.framesItem = this.fields.frames.parentElement
+    this.setMode('home')
+  }
+
+  // 'home' | 'space' | 'fly': relabels the readout and swaps the hint.
+  setMode(mode) {
+    if (mode === this.mode) return
+    this.mode = mode
+    const { labels, hint, coarseHint } = MODES[mode]
+    this.fields.aLabel.textContent = labels[0]
+    this.fields.bLabel.textContent = labels[1]
+    this.fields.cLabel.textContent = labels[2]
+    this.framesItem.hidden = mode !== 'home'
+    this.hint.textContent = this.coarse ? coarseHint : hint
+    this.lastWrite = -1
   }
 
   // Reflects the globe mode on the Blueprint toggle.
@@ -113,23 +158,35 @@ export class Hud {
     })
   }
 
-  // Called every frame; the text readouts are throttled to 10 Hz.
-  update(time, fps, globe) {
-    if (globe) this.trackTarget(globe.hovered, globe)
+  // Called every frame; the text readouts are throttled to 10 Hz. `nav` is
+  // { mode: 'home' | 'space' | 'fly', range, focusName, timeScale, speed,
+  // nearestName } from the camera; at home the readout is the globe's.
+  update(time, fps, globe, nav) {
+    const mode = nav?.mode ?? 'home'
+    this.setMode(mode)
+    if (globe) this.trackTarget(mode === 'home' ? globe.hovered : null, globe)
     if (time - this.lastWrite < 0.1) return
     this.lastWrite = time
 
     const total = this.store.count
-    this.fields.frames.textContent = padIndex(total, total)
-    this.fields.fps.textContent = String(Math.round(fps)).padStart(2, '0')
-    if (!globe) return
-    const { lat, lon } = globe.viewCenter()
-    this.fields.a.textContent = formatLatLon(lat, lon)
-    this.fields.b.textContent = globe.view.distance.toFixed(1).padStart(4, '0')
-    const front = globe.front
-    this.fields.c.textContent = front
-      ? `${padIndex(this.store.indexOf(front.photo) + 1, total)} ${front.photo.title}`
-      : '—'
+    const fields = this.fields
+    write(fields.frames, padIndex(total, total))
+    write(fields.fps, String(Math.round(fps)).padStart(2, '0'))
+    if (mode === 'fly') {
+      write(fields.a, 'Free')
+      write(fields.b, `${formatRange(nav.speed)} u/s`)
+      write(fields.c, nav.nearestName ?? '—')
+    } else if (mode === 'space') {
+      write(fields.a, nav.focusName)
+      write(fields.b, formatRange(nav.range))
+      write(fields.c, timeLabel(nav.timeScale))
+    } else if (globe) {
+      const { lat, lon } = globe.viewCenter()
+      write(fields.a, formatLatLon(lat, lon))
+      write(fields.b, formatRange(nav?.range ?? 0))
+      const front = globe.front
+      write(fields.c, front ? `${padIndex(this.store.indexOf(front.photo) + 1, total)} ${front.photo.title}` : '—')
+    }
   }
 
   // Locks the target brackets onto `panel` (or hides them for null).

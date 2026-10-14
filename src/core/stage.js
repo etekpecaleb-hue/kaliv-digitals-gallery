@@ -1,12 +1,13 @@
 // Owns the renderer, the main scene/camera and a screen-space overlay scene,
 // and drives every frame from gsap's ticker so tweens and rendering share a clock.
-import { OrthographicCamera, PerspectiveCamera, Scene, WebGLRenderer } from 'three'
+import { OrthographicCamera, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from 'three'
 import { gsap } from 'gsap'
 import { lerp } from './math.js'
 
 const CLEAR_COLOR = 0x04060d
 // Longest step a frame may advance, so a backgrounded tab doesn't jump on return.
 const MAX_STEP = 1 / 20
+const projected = new Vector3()
 
 export class Stage {
   canvas
@@ -19,9 +20,14 @@ export class Stage {
   width = 1
   height = 1
   pixelRatio = 1
+  // highest pixel ratio this device gets, and the current quality step's cap
+  maxPixelRatio = 1
+  pixelRatioCap = Infinity
   fps = 60
   time = 0
-  frameCallbacks = new Set()
+  // [{ callback, priority }], lowest priority first (the camera runs before
+  // anything that reads it)
+  frameCallbacks = []
   resizeCallbacks = new Set()
 
   constructor(canvas) {
@@ -38,10 +44,20 @@ export class Stage {
     gsap.ticker.add(this.tick)
   }
 
-  // Both return an unsubscribe function.
-  onFrame(callback) {
-    this.frameCallbacks.add(callback)
-    return () => this.frameCallbacks.delete(callback)
+  // Both return an unsubscribe function. Frame callbacks run in priority
+  // order (lower first), then in the order they were added.
+  // The list is replaced, never edited, so a callback may (un)subscribe
+  // while a frame is running.
+  onFrame(callback, priority = 0) {
+    const entry = { callback, priority }
+    const list = [...this.frameCallbacks]
+    let index = list.length
+    while (index > 0 && list[index - 1].priority > priority) index--
+    list.splice(index, 0, entry)
+    this.frameCallbacks = list
+    return () => {
+      this.frameCallbacks = this.frameCallbacks.filter((other) => other !== entry)
+    }
   }
 
   onResize(callback) {
@@ -51,10 +67,17 @@ export class Stage {
 
   // World position -> CSS pixel coordinates, written into `out`.
   project(position, out) {
-    const ndc = position.clone().project(this.camera)
+    const ndc = projected.copy(position).project(this.camera)
     out.x = (ndc.x * 0.5 + 0.5) * this.width
     out.y = (-ndc.y * 0.5 + 0.5) * this.height
     return out
+  }
+
+  // Caps the pixel ratio (adaptive quality); Infinity restores the device's.
+  setPixelRatioCap(cap) {
+    if (cap === this.pixelRatioCap) return
+    this.pixelRatioCap = cap
+    this.resize()
   }
 
   // Short, human-readable GPU name for the intro readout.
@@ -80,7 +103,8 @@ export class Stage {
     const height = window.innerHeight
     this.width = width
     this.height = height
-    this.pixelRatio = Math.min(window.devicePixelRatio || 1, this.coarse ? 1.75 : 2)
+    this.maxPixelRatio = Math.min(window.devicePixelRatio || 1, this.coarse ? 1.75 : 2)
+    this.pixelRatio = Math.min(this.maxPixelRatio, this.pixelRatioCap)
     this.renderer.setPixelRatio(this.pixelRatio)
     this.renderer.setSize(width, height, false)
     this.camera.aspect = width / height
@@ -99,7 +123,7 @@ export class Stage {
     const dt = Math.min(deltaMs / 1000, MAX_STEP)
     this.time += dt
     if (dt > 0) this.fps = lerp(this.fps, 1 / dt, 0.05)
-    for (const callback of this.frameCallbacks) callback(this.time, dt)
+    for (const { callback } of this.frameCallbacks) callback(this.time, dt)
     this.renderer.autoClear = true
     this.renderer.render(this.scene, this.camera)
     if (this.overlay.children.length > 0) {

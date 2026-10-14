@@ -1,4 +1,6 @@
-// Twinkling star shell plus three soft nebula sprites behind the globe.
+// Twinkling star shell plus three soft nebula sprites behind the globe. The
+// group follows the camera, so the stars sit at infinity; like the sky dome
+// they draw first and test no depth, so every body covers them.
 import {
   AdditiveBlending,
   BufferAttribute,
@@ -174,12 +176,13 @@ export class Starfield {
         uniforms: this.uniforms,
         vertexShader: STAR_VERTEX,
         fragmentShader: STAR_FRAGMENT,
-        transparent: true,
+        depthTest: false,
         depthWrite: false,
         blending: AdditiveBlending,
       }),
     )
     stars.frustumCulled = false
+    stars.renderOrder = -999
     this.group.add(stars)
 
     const cloud = makeNebulaTexture(stage.coarse ? 192 : 256, 11)
@@ -188,13 +191,14 @@ export class Starfield {
         new SpriteMaterial({
           map: cloud,
           color: new Color(hex),
-          transparent: true,
           opacity,
+          depthTest: false,
           depthWrite: false,
           blending: AdditiveBlending,
           rotation,
         }),
       )
+      sprite.renderOrder = -998
       sprite.position.set(x, y, z)
       sprite.scale.setScalar(scale)
       this.group.add(sprite)
@@ -203,9 +207,11 @@ export class Starfield {
     stage.scene.add(this.group)
     stage.onResize(() => (this.uniforms.uPixelRatio.value = stage.pixelRatio))
     this.uniforms.uPixelRatio.value = stage.pixelRatio
+    // runs after the camera has moved this frame (the explorer's priority is lower)
     stage.onFrame((time, dt) => {
       this.uniforms.uTime.value = time
       this.group.rotation.y += dt * 0.004
-    })
+      this.group.position.copy(stage.camera.position)
+    }, 10)
   }
 }
