@@ -73,8 +73,10 @@ export class SolarSystem {
     this.group.add(this.frame)
     scene.add(this.group)
 
+    // Physically based: diffuse = albedo * intensity / PI, so 3.2 is ~full sun
+    // and the ambient leaves night sides at ~2-4% (dark, bluish, readable).
     this.sunLight = new PointLight('#fff4e0', 3.2, 0, 0)
-    this.ambient = new AmbientLight('#6f86b8', 0.08)
+    this.ambient = new AmbientLight('#7d90c0', 0.26)
     this.group.add(this.ambient)
 
     this.sun = this.addBody(SUN, this.frame)

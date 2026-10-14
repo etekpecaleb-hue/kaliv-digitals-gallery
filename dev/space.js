@@ -1,6 +1,7 @@
 // Development harness for the space modules (not part of the site build).
 // URL params: focus=<body id> dist=<units> az=<deg> el=<deg> time=<scale>
-//             coarse=1 (phone budgets) fx=0 (skip belts/ships/effects)
+//             coarse=1 (phone budgets) fx=0 (skip belts/ships/effects; fx=sky,sun = only those)
+//             bake=now (bake every texture before the first frame) profile=1 (time bakes)
 // Keys: 0 home, 1-9 bodies, +/- zoom. window.__space exposes internals for QA.
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
@@ -31,11 +32,13 @@ async function optional(path, name) {
 }
 
 const createVisuals = await optional('../src/space/planets.js', 'createPlanetVisuals')
-const visuals = createVisuals ? await createVisuals({ renderer, scene, coarse }) : null
+const visuals = createVisuals ? await createVisuals({ renderer, scene, coarse, profile: params.get('profile') === '1' }) : null
 const system = new SolarSystem({ scene, renderer, camera, coarse, visuals })
 system.setTimeScale(Number(params.get('time') ?? 1))
 
-if (params.get('fx') !== '0') {
+// fx=0 skips every optional subsystem, fx=sky,sun loads only those
+const fx = params.get('fx')
+if (fx !== '0') {
   for (const [path, name] of [
     ['../src/space/sky.js', 'Sky'],
     ['../src/space/sun.js', 'SunCorona'],
@@ -43,6 +46,7 @@ if (params.get('fx') !== '0') {
     ['../src/space/ships.js', 'Ships'],
     ['../src/space/effects.js', 'SpaceEffects'],
   ]) {
+    if (fx && !fx.split(',').some((key) => path.includes(`/${key}.js`))) continue
     const Ctor = await optional(path, name)
     if (Ctor) {
       try {
@@ -53,6 +57,11 @@ if (params.get('fx') !== '0') {
     }
   }
 }
+
+// bake=now bakes everything up front, bake=moon,sky only those textures
+const bakeNow = params.get('bake')
+if (bakeNow) visuals?.baker.flush(bakeNow === 'now' ? null : (job) => bakeNow.split(',').includes(job.name))
+if (bakeNow && visuals) visuals.baker.paused = true
 
 const controls = new OrbitControls(camera, canvas)
 controls.enableDamping = true
@@ -109,8 +118,9 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera)
   if (++frames % 20 === 0) {
     const r = renderer.info.render
-    info.textContent = `focus ${focus.id}  calls ${r.calls}  tris ${r.triangles}  geo ${renderer.info.memory.geometries}  tex ${renderer.info.memory.textures}`
+    const pending = visuals?.baker.pending ?? 0
+    info.textContent = `focus ${focus.id}  calls ${r.calls}  tris ${r.triangles}  geo ${renderer.info.memory.geometries}  tex ${renderer.info.memory.textures}${pending ? `  baking ${pending}` : ''}`
   }
 })
 
-window.__space = { THREE, system, renderer, camera, controls, scene, focusOn: (id, d) => focusOn(system.bodyById(id), d) }
+window.__space = { THREE, system, visuals, renderer, camera, controls, scene, focusOn: (id, d) => focusOn(system.bodyById(id), d) }
