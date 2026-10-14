@@ -8,7 +8,8 @@
 //
 // Contract used by belts.js, ships.js, effects.js, the explorer camera and the UI:
 //   system.group / system.frame        THREE.Group roots
-//   system.bodies, sun, home, moon, worlds   Body records (see makeBody)
+//   system.bodies, sun, home, moon, worlds   Body records (see makeBody);
+//                                      body.years is the clock its orbit runs on
 //   system.bodyById(id), worldPosition(body, target)
 //   system.sunPosition                 Vector3, world space, updated each frame
 //   system.timeScale, setTimeScale(s), years (sim years since J2000)
@@ -26,9 +27,14 @@ const DEG = Math.PI / 180
 // Fastest a body may spin, in turns per second of real time, whatever the time
 // scale, so fast rotators never strobe at 10x / 100x.
 const MAX_TURNS_PER_SECOND = 0.2
+// The Moon circles right past the camera, so its orbit is capped too: at
+// 10x / 100x it laps home once every 12 s at most (body.years runs slower
+// than the system clock then; the planets always use the true clock).
+const MOON_MIN_LAP_SECONDS = 12
 
 function makeBody(def, object3D, extra = {}) {
   return {
+    years: 0,
     id: def.id,
     name: def.name,
     kind: def.kind,
@@ -91,6 +97,7 @@ export class SolarSystem {
     this.bodies.push(this.home)
     this.moon = this.addBody(MOON, this.group)
     for (const def of WORLDS) this.worlds.push(this.addBody(def, this.frame))
+    for (const body of this.bodies) body.years = this.years
 
     this.ctx = {
       years: this.years,
@@ -178,7 +185,9 @@ export class SolarSystem {
 
     for (const body of this.bodies) {
       const { def } = body
-      if (def.orbit && body !== this.home) orbitPosition(def.orbit, this.years, body.object3D.position)
+      if (def.parent) body.years += Math.min(dtYears, (dt * def.orbit.period) / MOON_MIN_LAP_SECONDS)
+      else body.years = this.years
+      if (def.orbit && body !== this.home) orbitPosition(def.orbit, body.years, body.object3D.position)
       if (body.spin && body.spinSeconds) {
         const turns = spinDt / body.spinSeconds
         const cap = dt * MAX_TURNS_PER_SECOND

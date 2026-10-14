@@ -295,7 +295,10 @@ class PlanetVisuals {
 
     if (recipe) {
       const priority = () => this.distanceTo(mesh, def.radius)
+      // dwarf planets never fill much of the screen: half-size maps on desktop
+      const size = !this.coarse && def.radius < 1.2 ? { width: this.baker.width / 2, height: this.baker.height / 2 } : {}
       this.baker.bake(def.texture, 'albedo', {
+        ...size,
         priority,
         onDone: (job) => {
           uniforms.uMap.value = job.texture
@@ -304,6 +307,7 @@ class PlanetVisuals {
       })
       if (rocky) {
         this.baker.bake(def.texture, 'normal', {
+          ...size,
           priority: () => 1e6 + priority(),
           onDone: (job) => {
             uniforms.uNormalMap.value = job.texture
@@ -557,7 +561,7 @@ class PlanetVisuals {
         const position = uniforms.uBodyPos.value[slot]
         if (body.id === 'home') position.copy(frame.position).negate()
         else position.copy(body.object3D.position)
-        uniforms.uBodyPhase.value[slot] = orbitPhase(body.def.orbit, ctx.years)
+        uniforms.uBodyPhase.value[slot] = orbitPhase(body.def.orbit, body.years ?? ctx.years)
         const a = body.def.orbit.a
         uniforms.uOwnFade.value[slot] = smooth(a * 0.35, a * 1.2, local.distanceTo(position))
         if (body.kind === 'Dwarf planet') {

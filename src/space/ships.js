@@ -376,7 +376,8 @@ export class Ships {
           p.copy(light.offset).applyMatrix4(anchor.object.matrixWorld)
           glows.setPosition(light.index, p)
           if (light.engine) {
-            const flicker = 0.88 + 0.12 * Math.sin(time * 41 + light.index * 2.3) * Math.sin(time * 17 + light.index)
+            // a fast shimmer, held steady for reduced motion
+            const flicker = this.system.reduced ? 1 : 0.88 + 0.12 * Math.sin(time * 41 + light.index * 2.3) * Math.sin(time * 17 + light.index)
             glows.intensities[light.index] = (0.45 + 0.75 * craft.throttle) * flicker
           }
         }

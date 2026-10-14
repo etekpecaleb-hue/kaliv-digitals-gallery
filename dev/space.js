@@ -155,9 +155,24 @@ renderer.setAnimationLoop(() => {
   }
 })
 
+// renderer.info after the last frame, plus the baked texture memory (RGBA8,
+// a third more with mipmaps) in MB.
 function stats() {
   const { render, memory } = renderer.info
-  return { calls: render.calls, triangles: render.triangles, points: render.points, lines: render.lines, geometries: memory.geometries, textures: memory.textures }
+  let bytes = 0
+  for (const job of visuals?.baker.jobs ?? []) {
+    const { width, height, texture } = job.target
+    bytes += width * height * 4 * (texture.generateMipmaps ? 4 / 3 : 1)
+  }
+  return {
+    calls: render.calls,
+    triangles: render.triangles,
+    points: render.points,
+    lines: render.lines,
+    geometries: memory.geometries,
+    textures: memory.textures,
+    bakedMB: Math.round(bytes / 1e5) / 10,
+  }
 }
 
 // Tears the whole space scene down; afterwards renderer.info.memory should
