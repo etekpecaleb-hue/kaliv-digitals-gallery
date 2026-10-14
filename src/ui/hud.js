@@ -90,6 +90,8 @@ export class Hud {
     this.fields.bLabel.textContent = labels[1]
     this.fields.cLabel.textContent = labels[2]
     this.framesItem.hidden = mode !== 'home'
+    // phones hide the range at home; out in space it takes the frames' place
+    this.bottom.dataset.mode = mode
     this.hint.textContent = this.coarse ? coarseHint : hint
     this.lastWrite = -1
   }

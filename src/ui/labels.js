@@ -147,10 +147,16 @@ export class Labels {
       const far = entry.range === Infinity || entry.target === this.focus
       const fade = far ? 1 : 1 - smooth(entry.range * 0.75, entry.range, distance)
       if (fade <= 0.02) continue
-      // beside the body's limb, vertically centred on it
-      const x = screen.x + Math.max(radiusPx, 3) + 4
+      // beside the body's limb, vertically centred on it; on its left when
+      // the right edge of the screen would cut it off
+      if (!entry.width) entry.width = entry.el.offsetWidth || 90
+      const limb = Math.max(radiusPx, 3) + 4
+      let x = screen.x + limb
+      if (x + entry.width > width - EDGE) x = screen.x - limb - entry.width
       const y = screen.y - this.height / 2
-      if (x < -EDGE || x > width + EDGE || y < -this.height || y > height) continue
+      // only for bodies on screen (a label flipped left of one just past the
+      // right edge would otherwise still show)
+      if (screen.x < -EDGE || screen.x > width + EDGE || y < -this.height || y > height) continue
       if (this.covered(entry, position, distance)) continue
       entry.x = x
       entry.y = y
@@ -181,7 +187,17 @@ export class Labels {
   // Greedy: the most important (then nearest) labels claim their space first.
   declutter() {
     const order = this.order
-    order.sort(byImportance)
+    // insertion sort in place: the order barely changes between frames, and
+    // Array.prototype.sort may allocate a scratch copy every call
+    for (let i = 1; i < order.length; i++) {
+      const entry = order[i]
+      let j = i - 1
+      while (j >= 0 && byImportance(order[j], entry) > 0) {
+        order[j + 1] = order[j]
+        j--
+      }
+      order[j + 1] = entry
+    }
     const placed = this.placed
     const tall = this.height
     placed.length = 0
@@ -189,7 +205,6 @@ export class Labels {
       const entry = order[i]
       if (entry.opacity <= 0) continue
       // the focus always gets its label; then by importance
-      if (!entry.width) entry.width = entry.el.offsetWidth || 90
       const left = entry.x
       const right = entry.x + entry.width
       const top = entry.y

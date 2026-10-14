@@ -1280,6 +1280,9 @@ a {
   .readout__item:nth-child(3) {
     display: none;
   }
+  .hud-bottom:not([data-mode='home']) .readout__item:nth-child(3) {
+    display: flex;
+  }
   .intro__log {
     bottom: calc(var(--safe-b) + var(--gutter) + 104px);
   }
@@ -1936,6 +1939,12 @@ a {
 .flight.has-touch .flight__keys,
 .flight.has-touch .flight__exit kbd {
   display: none;
+}
+/* wide screens have the same keys in the HUD hint */
+@media (min-width: 641px) {
+  .flight__keys {
+    display: none;
+  }
 }
 @media (pointer: coarse) {
   .flight__title,

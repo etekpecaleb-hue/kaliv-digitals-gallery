@@ -121,6 +121,8 @@ export class Explorer {
   listeners = { focus: new Set(), travel: new Set(), mode: new Set() }
   centerOut = { lat: 0, lon: 0 }
   homeFit = 18
+  frameMs = 16
+  lastFrameAt = 0
 
   // options: { stage, system, globe, reduced, isBlocked() -> bool, onTap(x, y, event) }
   constructor({ stage, system, globe, reduced = false, isBlocked = () => false, onTap = null }) {
@@ -137,6 +139,9 @@ export class Explorer {
     this.bodyPositions = system.bodies.map(() => new Vector3())
     // radius nothing may enter (Haumea is an ellipsoid; Saturn's rings are not solid)
     this.solidRadii = system.bodies.map((body) => body.radius * Math.max(1, ...(body.def?.shape ?? [1])))
+    // how close the camera may come: 1.05 × the radius, but home keeps the
+    // camera above its photo panels rather than down between them
+    this.keepOutRadii = system.bodies.map((body, i) => (body === system.home ? body.radius * 1.2 : this.solidRadii[i] * 1.05))
     this.homeFit = globe.restDistance
     this.camera.far = FAR
     this.bindInput()
@@ -219,7 +224,8 @@ export class Explorer {
     const aspect = camera.aspect
     const fill = aspect < 1 ? 1 : 0.84
     const fit = (this.extentOf(target) * 1.12) / (fill * tanHalf * Math.min(1, aspect))
-    const scale = target === this.system.sun ? 1.3 : 0.88
+    // a portrait phone keeps a margin either side (the width is the limit)
+    const scale = target === this.system.sun ? 1.3 : aspect < 1 ? 1.06 : 0.88
     return Math.max(fit * scale, this.minDistanceOf(target) * 1.4)
   }
 
@@ -366,13 +372,33 @@ export class Explorer {
       drag.downT = event.timeStamp
       this.velocity.yaw = this.velocity.pitch = 0
     } else if (this.pointers.size === 2 && this.mode === 'orbit') {
-      const [a, b] = this.pointers.values()
-      this.pinch.distance = Math.hypot(a.x - b.x, a.y - b.y)
+      this.pinch.distance = this.pinchSpan()
       this.pinch.goal = this.goal.distance
       // pinches cover more ground out in space, exactly like the globe's at home
       this.pinch.power = 1 + 0.5 * smooth(clamp((this.goal.distance - 40) / 360, 0, 1))
       this.drag.moved = true
     }
+  }
+
+  // Distance between the first two pointers (no iterator allocations: the
+  // pointer callbacks run for every move event).
+  span = { count: 0, ax: 0, ay: 0, bx: 0, by: 0 }
+  addToSpan = (pointer) => {
+    const span = this.span
+    if (span.count === 0) {
+      span.ax = pointer.x
+      span.ay = pointer.y
+    } else if (span.count === 1) {
+      span.bx = pointer.x
+      span.by = pointer.y
+    }
+    span.count++
+  }
+
+  pinchSpan() {
+    this.span.count = 0
+    this.pointers.forEach(this.addToSpan)
+    return Math.hypot(this.span.ax - this.span.bx, this.span.ay - this.span.by)
   }
 
   onPointerMove = (event) => {
@@ -391,8 +417,7 @@ export class Explorer {
 
     if (this.pointers.size === 2) {
       if (this.mode !== 'orbit') return
-      const [a, b] = this.pointers.values()
-      const distance = Math.hypot(a.x - b.x, a.y - b.y)
+      const distance = this.pinchSpan()
       if (this.pinch.distance > 0 && distance > 0) {
         const ratio = (this.pinch.distance / distance) ** this.pinch.power
         this.goal.distance = this.clampDistance(this.pinch.goal * ratio)
@@ -433,13 +458,16 @@ export class Explorer {
     const drag = this.drag
     if (this.pointers.size > 0) {
       // pinch ended: keep dragging with the remaining finger without a jump
-      const [remaining] = this.pointers.values()
-      drag.lastX = remaining.x
-      drag.lastY = remaining.y
+      this.pinchSpan()
+      drag.lastX = this.span.ax
+      drag.lastY = this.span.ay
       return
     }
     this.canvas.classList.remove('is-dragging')
-    const tap = !drag.moved && event.timeStamp - drag.downT < TAP_MS
+    // a busy frame delays each event by up to a frame, so slow frames
+    // stretch the allowance (by ~30 ms at 60 fps)
+    const tapLimit = TAP_MS + 2 * this.frameMs
+    const tap = !drag.moved && event.timeStamp - drag.downT < tapLimit
     drag.active = false
     drag.moved = false
     // a drag that stopped before release shouldn't fling
@@ -575,6 +603,17 @@ export class Explorer {
     this.lastInput = this.stage.time
   }
 
+  // Already home: ease back to the resting framing (no flight).
+  settleHome() {
+    if (this.mode !== 'orbit' || this.focus !== this.system.home || this.travel) return
+    gsap.killTweensOf(this.view)
+    this.focusing = false
+    this.goal.distance = this.globe.restDistance
+    this.goal.pitch = REST_PITCH
+    this.velocity.yaw = this.velocity.pitch = 0
+    this.lastInput = this.stage.time
+  }
+
   // The intro's dive: from z = 60 down to the resting distance (a tween the
   // intro timeline can hold).
   dive({ duration = 2, ease = 'expo.inOut' } = {}) {
@@ -608,7 +647,11 @@ export class Explorer {
     if (target === system.home) {
       out.yaw = angles.yaw
       out.pitch = REST_PITCH
-    } else if (target === system.sun || !target.def) {
+    } else if (target === system.sun) {
+      // from above the orbit plane, so the inner planets don't line up in front
+      out.yaw = angles.yaw
+      out.pitch = clamp(Math.max(angles.pitch, 0.32), -0.45, 0.6)
+    } else if (!target.def) {
       out.yaw = angles.yaw
       out.pitch = clamp(angles.pitch, -0.45, 0.45)
     } else {
@@ -827,6 +870,11 @@ export class Explorer {
   // ------------------------------------------------------------------ frame
 
   update(time, dt) {
+    // the slowest recent frame (real time, unclamped), for tap timing
+    const now = performance.now()
+    // (capped, so the gap after a hidden tab doesn't count)
+    if (this.lastFrameAt > 0) this.frameMs = Math.max(this.frameMs * 0.95, Math.min(now - this.lastFrameAt, 750))
+    this.lastFrameAt = now
     this.refreshBodies()
     if (this.mode === 'fly') this.updateFly(dt)
     else this.updateOrbit(time, dt)
@@ -899,14 +947,14 @@ export class Explorer {
     }
   }
 
-  // Pushes `position` out of every body (but `skip`) to 1.05 × its radius,
-  // and cancels any velocity heading inwards.
+  // Pushes `position` out of every body (but `skip`) to its keep-out radius
+  // (1.05 × its radius), and cancels any velocity heading inwards.
   keepOut(position, skip, velocity) {
     const bodies = this.system.bodies
     for (let i = 0; i < bodies.length; i++) {
       const body = bodies[i]
       if (body === skip) continue
-      const limit = this.solidRadii[i] * 1.05 + this.camera.near
+      const limit = this.keepOutRadii[i] + this.camera.near
       toBody.subVectors(position, this.bodyPositions[i])
       const d = toBody.length()
       if (d >= limit || d < 1e-6) continue

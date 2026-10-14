@@ -195,9 +195,12 @@ async function boot() {
   }
 
   function flyTo(target) {
-    if (!target || !explorer.enabled) return
-    if (target === system.home) void explorer.goHome()
-    else void explorer.flyTo(target)
+    if (!target || !explorer.enabled || selecting) return
+    // home and close in already: just settle back to the resting view
+    if (target === system.home) {
+      if (explorer.atHome) explorer.settleHome()
+      else void explorer.goHome()
+    } else void explorer.flyTo(target)
   }
 
   // Globe hover/picking only at home, close in, when nothing else has the input.
@@ -304,7 +307,10 @@ async function boot() {
   stage.onFrame((time) => {
     if (intro.active) return
     const focus = explorer.travel?.to ?? explorer.focus
-    nav.mode = explorer.mode === 'fly' ? 'fly' : explorer.atHome || (focus === system.home && explorer.view.distance < HOME_NEAR) ? 'home' : 'space'
+    // the globe's readout once the camera is really near home (the gallery
+    // sits at the origin), not merely aimed at it mid-flight
+    const nearHome = focus === system.home && camera.position.lengthSq() < HOME_NEAR * HOME_NEAR
+    nav.mode = explorer.mode === 'fly' ? 'fly' : explorer.atHome || nearHome ? 'home' : 'space'
     nav.range = explorer.mode === 'fly' ? explorer.nearest.surface : explorer.view.distance
     nav.focusName = focus.name
     nav.timeScale = system.ctx.timeScale
@@ -489,7 +495,7 @@ async function boot() {
   byId('brand').addEventListener('click', (event) => {
     event.preventDefault()
     if (Sheet.current) Sheet.current.close()
-    if (!explorer.atHome) flyTo(system.home)
+    flyTo(system.home)
   })
 
   // Adaptive quality: a lower pixel ratio while the frame rate stays low
@@ -548,7 +554,7 @@ async function boot() {
     }
     if (key === 'g' && !event.repeat) {
       event.preventDefault()
-      if (!explorer.atHome) flyTo(system.home)
+      flyTo(system.home)
       return
     }
     const onPage = target === document.body || target === document.documentElement || target === canvas
