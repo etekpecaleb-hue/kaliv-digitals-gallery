@@ -1,5 +1,6 @@
 // The photo globe: curved photo panels in latitude rows over a blueprint core,
 // with an atmosphere glow, orbit rings, two satellites and polar emblem caps.
+// With Blueprint off it morphs into a seamless photo sphere (photoSphere.js).
 // Handles its own drag/pinch/wheel/keyboard input and, when `cameraControl`
 // is on, drives the camera.
 import {
@@ -31,8 +32,9 @@ import {
   Vector3,
 } from 'three'
 import { gsap } from 'gsap'
-import { clamp, damp, seededRandom } from '../core/math.js'
+import { clamp, damp, lerp, seededRandom, wrap } from '../core/math.js'
 import { fitLayout, latLonToXYZ, spreadIndices, viewFor } from './rowLayout.js'
+import { PhotoSphere } from './photoSphere.js'
 import {
   CORE_FRAGMENT,
   CORE_VERTEX,
@@ -57,6 +59,10 @@ const UP = new Vector3(0, 1, 0)
 const scratch = new Vector3()
 const satelliteA = new Vector3()
 const satelliteB = new Vector3()
+const morphEuler = new Euler()
+// the blueprint panels' slide into their sphere cells, and its easing
+const easeSlide = gsap.parseEase('power3.inOut')
+const smooth = (t, a, b) => MathUtils.smoothstep(t, a, b)
 
 // UV scale that cover-fits an image into a panel (crops the longer side).
 function coverScale(panelAspect, imageAspect) {
@@ -77,6 +83,7 @@ function panelMaterial({ texture, tone, panelAspect, imageAspect, shared }) {
       uHover: { value: 0 },
       uReveal: { value: 1 },
       uDim: { value: 0 },
+      uOpacity: { value: 1 },
       uFade: shared.uFade,
     },
     vertexShader: PANEL_VERTEX,
@@ -93,6 +100,7 @@ function coreMaterial(shared) {
       uLine: { value: new Color('#2f7bff') },
       uRim: { value: new Color('#3f86ff') },
       uFade: shared.uFade,
+      uGrid: { value: 1 },
     },
     vertexShader: CORE_VERTEX,
     fragmentShader: CORE_FRAGMENT,
@@ -200,10 +208,25 @@ export class PhotoGlobe {
   root = new Group()
   spin = new Group()
   panelGroup = new Group()
-  shared = { uFade: { value: 1 }, uTime: { value: 0 } }
+  shared = {
+    uFade: { value: 1 },
+    uTime: { value: 0 },
+    // optional day/night on the photo sphere: world-space sun direction
+    uSunDir: { value: new Vector3(1, 0, 0) },
+    uDayNight: { value: 0 },
+  }
   view = { pitch: REST_PITCH, yaw: 0, distance: 18 }
   goal = { pitch: REST_PITCH, yaw: 0, distance: 18 }
-  panels = []
+  // the blueprint's panels; `panels` is whichever set the current mode shows
+  blueprintPanels = []
+  sphere
+  // 'blueprint' | 'sphere', and the morph between them (t: 0 = blueprint, 1 = sphere)
+  mode = 'blueprint'
+  morph = { t: 0, applied: -1, tween: null, extras: 1 }
+  modeListeners = new Set()
+  core
+  glow
+  extras = new Group()
   layout
   hovered = null
   front = null
@@ -251,11 +274,19 @@ export class PhotoGlobe {
     this.root.add(this.spin)
     this.spin.add(this.panelGroup)
     this.spin.rotation.order = 'XYZ'
+    this.sphere = new PhotoSphere({ radius: RADIUS, shared: this.shared })
+    this.spin.add(this.sphere.group)
+    if (options.blueprint === false) {
+      this.mode = 'sphere'
+      this.morph.t = 1
+    }
 
     const core = new Mesh(new SphereGeometry(4.825, 96, 64), coreMaterial(this.shared))
     this.spin.add(core)
     const glow = new Mesh(new SphereGeometry(6.1, 64, 48), glowMaterial(this.shared))
     this.root.add(glow)
+    this.core = core
+    this.glow = glow
 
     const solid = new LineBasicMaterial({ color: SIGNAL_HI, transparent: true, opacity: 0.32, depthWrite: false })
     const dashed = new LineDashedMaterial({
@@ -288,7 +319,9 @@ export class PhotoGlobe {
     satelliteGeometry.setAttribute('position', new Float32BufferAttribute(new Float32Array(6), 3))
     this.satellites = new Points(satelliteGeometry, satelliteMaterial)
     this.satellites.userData.orbits = [mainOrbit, sideOrbit]
-    this.root.add(this.rings, this.satellites)
+    // rings and satellites belong to the blueprint look and fade with it
+    this.extras.add(this.rings, this.satellites)
+    this.root.add(this.extras)
 
     stage.scene.add(this.root)
     this.root.visible = false
@@ -299,7 +332,7 @@ export class PhotoGlobe {
 
   // (Re)creates every panel for the store's current photos.
   build() {
-    for (const panel of this.panels) {
+    for (const panel of this.blueprintPanels) {
       panel.mesh.removeFromParent()
       panel.mesh.material.dispose()
     }
@@ -312,12 +345,13 @@ export class PhotoGlobe {
     for (const material of this.polarMaterials) material.dispose()
     this.polarMaterials = []
     this.hovered = null
+    this.front = null
 
     this.layout = fitLayout(this.baseOptions(), this.store.count)
     const order = spreadIndices(this.layout.slots.length, this.store.count)
     const { panelWidth, panelHeight } = this.layout.options
     const panelAspect = panelWidth / panelHeight
-    this.panels = this.layout.slots.map((slot, index) => {
+    this.blueprintPanels = this.layout.slots.map((slot, index) => {
       const row = this.rowGeometry(slot.row, slot.lat)
       const photo = this.store.photos[order[index]]
       const material = panelMaterial({
@@ -347,7 +381,15 @@ export class PhotoGlobe {
       }
     })
     this.buildPolarBadges()
+    this.sphere.build(this.store)
+    this.planMorph()
+    this.applyMorph()
     this.updateFit()
+  }
+
+  // The panels (or sphere cells) the current mode shows and picks.
+  get panels() {
+    return this.mode === 'sphere' ? this.sphere.cells : this.blueprintPanels
   }
 
   // Panels fly in from a scattered cloud, nearest-to-camera first, and scan
@@ -360,11 +402,12 @@ export class PhotoGlobe {
       tl.to(this.shared.uFade, { value: 1, duration: 0.6, ease: 'power1.out' })
       return tl
     }
+    if (this.mode === 'sphere') return this.assembleSphere(tl, duration)
     this.assembling = true
     const random = seededRandom(17)
     // direction from the globe centre to the camera, in globe space
     const toCamera = new Vector3(0, 0, 1).applyEuler(new Euler(-this.view.pitch, -this.view.yaw, 0, 'ZYX'))
-    for (const panel of this.panels) {
+    for (const panel of this.blueprintPanels) {
       const { mesh, basePosition, baseQuaternion } = panel
       const from = panel.normal
         .clone()
@@ -425,7 +468,7 @@ export class PhotoGlobe {
   // Turns `panel` to face the camera (and zooms in on it unless `zoom` is false).
   focus(panel, zoom = true) {
     const { pitch, yaw } = viewFor(panel.lat, panel.lon, this.view.yaw)
-    const target = { pitch, yaw, distance: zoom ? this.focusDistance() : this.view.distance }
+    const target = { pitch, yaw, distance: zoom ? this.focusDistance(panel) : this.view.distance }
     this.focusing = true
     this.velocity.pitch = this.velocity.yaw = 0
     return new Promise((resolve) => {
@@ -452,9 +495,10 @@ export class PhotoGlobe {
 
   // Dims every panel except `panel` (null clears).
   spotlight(panel) {
-    for (const other of this.panels) {
+    for (const other of [...this.blueprintPanels, ...this.sphere.cells]) {
       const dim = panel && other !== panel ? 0.75 : 0
-      gsap.to(other.mesh.material.uniforms.uDim, { value: dim, duration: 0.5, overwrite: true })
+      const uniform = other.mesh.material.uniforms.uDim
+      if (uniform.value !== dim) gsap.to(uniform, { value: dim, duration: 0.5, overwrite: true })
     }
   }
 
@@ -504,7 +548,7 @@ export class PhotoGlobe {
 
   // Swaps loaded textures into panels that were still showing their tone.
   refreshTextures() {
-    for (const panel of this.panels) {
+    for (const panel of this.blueprintPanels) {
       const texture = this.store.texture(panel.photo)
       const uniforms = panel.mesh.material.uniforms
       if (texture && uniforms.uMap.value !== texture) {
@@ -512,26 +556,206 @@ export class PhotoGlobe {
         uniforms.uHasMap.value = 1
       }
     }
+    this.sphere.refreshTextures(this.store)
   }
 
-  // Replays the scan-in on every panel showing one of `photos`.
+  // Replays the scan-in on every panel showing one of `photos` (in the
+  // current mode; the other mode's set is simply shown).
   revealPhotos(photos) {
     const wanted = new Set(photos)
-    this.panels
-      .filter((panel) => wanted.has(panel.photo))
-      .forEach((panel, i) => {
-        gsap.fromTo(
-          panel.mesh.material.uniforms.uReveal,
-          { value: 0 },
-          {
-            value: 1,
-            duration: this.reduced ? 0.01 : 0.9,
-            delay: this.reduced ? 0 : 0.2 + i * 0.06,
-            ease: 'power2.out',
-          },
-        )
-      })
+    const hidden = this.mode === 'sphere' ? this.blueprintPanels : this.sphere.cells
+    for (const panel of hidden) panel.mesh.material.uniforms.uReveal.value = 1
+    // nearest the camera first; the whole wave stays under ~2.5 s
+    const spin = this.spin.quaternion
+    const facing = (panel) => scratch.copy(panel.normal).applyQuaternion(spin).z
+    const shown = this.panels.filter((panel) => wanted.has(panel.photo)).sort((a, b) => facing(b) - facing(a))
+    const stagger = Math.min(0.06, 2.4 / Math.max(1, shown.length))
+    shown.forEach((panel, i) => {
+      gsap.fromTo(
+        panel.mesh.material.uniforms.uReveal,
+        { value: 0 },
+        {
+          value: 1,
+          duration: this.reduced ? 0.01 : 0.9,
+          delay: this.reduced ? 0 : 0.2 + i * stagger,
+          ease: 'power2.out',
+        },
+      )
+    })
   }
+
+  // ---------------------------------------------------------------------------
+  // Modes: Blueprint (panels in rows over the gridded core) and the photo
+  // sphere (seamless cells). Kept apart from the camera/input code above and
+  // below: modes only change what is drawn and picked, never the view.
+
+  get blueprint() {
+    return this.mode === 'blueprint'
+  }
+
+  // True while the morph between the modes runs.
+  get morphing() {
+    return this.morph.t > 0 && this.morph.t < 1
+  }
+
+  // `listener(mode)` after every mode change; returns an unsubscribe function.
+  onModeChange(listener) {
+    this.modeListeners.add(listener)
+    return () => this.modeListeners.delete(listener)
+  }
+
+  // Switches Blueprint on (the panel globe) or off (the photo sphere) with a
+  // ~1.2 s morph that can be reversed at any point. Resolves when it settles.
+  setBlueprint(on, { animate = true } = {}) {
+    const mode = on ? 'blueprint' : 'sphere'
+    const target = on ? 0 : 1
+    if (mode !== this.mode) {
+      this.mode = mode
+      this.setHover(null)
+      this.front = null
+      for (const listener of this.modeListeners) listener(mode)
+    }
+    this.morph.tween?.kill()
+    this.morph.tween = null
+    const distance = Math.abs(this.morph.t - target)
+    if (!animate || distance === 0 || !this.root.visible) {
+      this.morph.t = target
+      this.applyMorph()
+      return Promise.resolve()
+    }
+    return new Promise((resolve) => {
+      this.morph.tween = gsap.to(this.morph, {
+        t: target,
+        duration: (this.reduced ? 0.4 : 1.25) * Math.max(0.35, distance),
+        // a reversal mid-way starts at speed instead of easing in again
+        ease: distance < 0.98 ? 'power2.out' : 'power2.inOut',
+        onUpdate: () => this.applyMorph(),
+        onComplete: () => {
+          this.morph.tween = null
+          resolve()
+        },
+        onInterrupt: resolve,
+      })
+    })
+  }
+
+  // Optional day/night on the photo sphere: `direction` is the world-space
+  // direction towards the sun (null turns it off). Never darker than ~0.72.
+  setSun(direction, strength = 1) {
+    if (direction) this.shared.uSunDir.value.copy(direction).normalize()
+    gsap.to(this.shared.uDayNight, { value: direction ? strength : 0, duration: 0.6, overwrite: true })
+  }
+
+  // Where every blueprint panel slides to: the sphere cell under its centre,
+  // with the scale that makes it that cell's size.
+  planMorph() {
+    for (const panel of this.blueprintPanels) {
+      const cell = this.sphere.cellAt(panel.normal)
+      if (!cell) {
+        panel.target = null
+        continue
+      }
+      const { panelWidth, panelHeight } = this.layout.options
+      const cap = cell.kind === 'cap'
+      panel.target = {
+        lat: cap ? Math.sign(cell.lat) * (Math.PI / 2 - 0.02) : cell.lat,
+        dLon: cap ? 0 : wrap(cell.lon - panel.lon, -Math.PI, Math.PI),
+        scaleX: clamp(cell.width / panelWidth, 0.6, 2.4),
+        scaleY: clamp(cell.height / panelHeight, 0.6, 2.4),
+      }
+    }
+  }
+
+  // Draws the morph at `this.morph.t`. Everything is a pure function of t,
+  // so the morph can stop or reverse at any frame.
+  applyMorph() {
+    const t = this.morph.t
+    const reduced = this.reduced
+    this.morph.applied = t
+    this.morph.extras = 1 - smooth(t, 0, 0.45)
+    this.core.material.uniforms.uGrid.value = this.morph.extras
+    this.core.visible = t < 1
+    this.glow.material.uniforms.uStrength.value = lerp(1, 0.58, smooth(t, 0.1, 0.9))
+    this.extras.visible = this.morph.extras > 0.001
+    if (!reduced) this.extras.scale.setScalar(1 + 0.12 * (1 - this.morph.extras))
+    for (const cap of this.polar) cap.visible = this.extras.visible
+    this.panelGroup.visible = t < 1
+    this.sphere.group.visible = t > 0
+    // the intro's assembly animates the meshes itself
+    if (this.assembling) return
+    this.sphere.applyMorph(t, reduced)
+    for (const panel of this.blueprintPanels) this.morphPanel(panel, t, reduced)
+  }
+
+  morphPanel(panel, t, reduced) {
+    const { mesh } = panel
+    const material = mesh.material
+    // equator rows move first, the rows nearest the poles last
+    const p = reduced ? t : clamp((t - 0.3 * Math.min(1, Math.abs(panel.lat))) / 0.6, 0, 1)
+    const opacity = reduced ? 1 - t : 1 - smooth(p, 0.45, 0.95)
+    material.uniforms.uOpacity.value = opacity
+    material.transparent = opacity < 1
+    material.alphaToCoverage = !material.transparent
+    mesh.visible = opacity > 0.002
+    if (p === 0 || !panel.target) {
+      mesh.position.copy(panel.basePosition)
+      mesh.quaternion.copy(panel.baseQuaternion)
+      mesh.scale.setScalar(1)
+      return
+    }
+    if (reduced) {
+      // crossfade only: lift a hair so it never z-fights the cells
+      mesh.position.copy(panel.basePosition).multiplyScalar(1.006)
+      return
+    }
+    const e = easeSlide(p)
+    const target = panel.target
+    const lat = lerp(panel.lat, target.lat, e)
+    const lon = panel.lon + target.dLon * e
+    // arcs up off the surface on the way, then settles just above the cell
+    const lift = 1.012 + 0.05 * Math.sin(Math.PI * e)
+    mesh.position.set(...latLonToXYZ(lat, lon, RADIUS * lift))
+    mesh.quaternion.setFromEuler(morphEuler.set(panel.lat - lat, lon, 0, 'YXZ'))
+    mesh.scale.set(lerp(1, target.scaleX, e), lerp(1, target.scaleY, e), 1)
+  }
+
+  // Intro hand-over in photo-sphere mode: cells fall onto the sphere from
+  // further out, nearest the camera first, and scan their photos in.
+  assembleSphere(tl, duration) {
+    this.assembling = true
+    const random = seededRandom(23)
+    const toCamera = new Vector3(0, 0, 1).applyEuler(new Euler(-this.view.pitch, -this.view.yaw, 0, 'ZYX'))
+    for (const cell of this.sphere.cells) {
+      const { mesh, normal } = cell
+      const from = 9 + random() * 16
+      const progress = { t: 0 }
+      mesh.position.copy(normal).multiplyScalar(from)
+      mesh.material.uniforms.uReveal.value = 0
+      mesh.material.uniforms.uGrow.value = 0.25
+      const delay = (1 - normal.dot(toCamera)) * 0.5 * 0.75 + random() * 0.12
+      tl.to(
+        progress,
+        {
+          t: 1,
+          duration,
+          ease: 'expo.out',
+          onUpdate: () => {
+            mesh.position.copy(normal).multiplyScalar(from * (1 - progress.t))
+            mesh.material.uniforms.uGrow.value = 0.25 + 0.75 * progress.t
+          },
+        },
+        delay,
+      )
+      tl.to(mesh.material.uniforms.uReveal, { value: 1, duration: 0.8, ease: 'power2.out' }, delay + duration * 0.3)
+    }
+    tl.fromTo(this.shared.uFade, { value: 0 }, { value: 1, duration: 0.9, ease: 'power2.out' }, 0)
+    tl.call(() => {
+      this.assembling = false
+      for (const cell of this.sphere.cells) cell.mesh.position.set(0, 0, 0)
+    })
+    return tl
+  }
+  // ---------------------------------------------------------------------------
 
   rotateBy(yaw, pitch) {
     this.goal.yaw += yaw
@@ -614,11 +838,13 @@ export class PhotoGlobe {
     this.spin.add(north, south)
   }
 
-  // Camera distance at which one panel fills most of the view.
-  focusDistance() {
+  // Camera distance at which one panel (or sphere cell) fills most of the view.
+  focusDistance(panel) {
     const tanHalf = Math.tan(MathUtils.degToRad(this.stage.camera.fov / 2))
     const aspect = this.stage.camera.aspect
-    const { panelWidth, panelHeight } = this.layout.options
+    const { panelWidth, panelHeight } = panel?.width
+      ? { panelWidth: panel.width, panelHeight: panel.height }
+      : this.layout.options
     return clamp(
       RADIUS + Math.max(panelHeight / (0.9 * tanHalf), panelWidth / (1.5 * tanHalf * aspect)),
       this.minDistance,
@@ -750,7 +976,7 @@ export class PhotoGlobe {
     addEventListener(
       'wheel',
       (event) => {
-        if (!this.interactive || event.target?.closest?.('.lightbox, .intro')) return
+        if (!this.interactive || event.target?.closest?.('.lightbox, .intro, .sheet')) return
         event.preventDefault()
         const delta = event.deltaMode === 1 ? event.deltaY * 32 : event.deltaY
         this.zoomBy(Math.exp(clamp(delta, -200, 200) * 0.0012))
@@ -797,10 +1023,11 @@ export class PhotoGlobe {
 
   // The front-facing panel under a screen point, or null.
   pick(x, y) {
-    if (!this.root.visible) return null
+    if (!this.root.visible || this.morphing) return null
     this.pointer.set((x / this.stage.width) * 2 - 1, -(y / this.stage.height) * 2 + 1)
     this.raycaster.setFromCamera(this.pointer, this.stage.camera)
-    const hit = this.raycaster.intersectObjects(this.panelGroup.children, false)[0]
+    const group = this.mode === 'sphere' ? this.sphere.group : this.panelGroup
+    const hit = this.raycaster.intersectObjects(group.children, false)[0]
     if (!hit) return null
     const panel = this.panels[hit.object.userData.panel]
     return panel.normal.clone().applyQuaternion(this.spin.quaternion).z > 0.15 ? panel : null
@@ -851,17 +1078,24 @@ export class PhotoGlobe {
       this.setHover(null)
     }
 
+    if (this.morph.applied !== this.morph.t) this.applyMorph()
+    if (this.morph.t < 1) {
+      for (const panel of this.blueprintPanels) {
+        panel.hover = damp(panel.hover, panel === this.hovered ? 1 : 0, 10, dt)
+        const uniforms = panel.mesh.material.uniforms
+        uniforms.uHover.value = panel.hover
+        if (!this.assembling && this.morph.t === 0) {
+          // hovered panels lift off the surface and grow slightly
+          panel.mesh.position.copy(panel.basePosition).multiplyScalar(1 + 0.035 * panel.hover)
+          panel.mesh.scale.setScalar(1 + 0.05 * panel.hover)
+        }
+      }
+    }
+    if (this.morph.t > 0) this.sphere.update(dt, this.hovered, !this.assembling)
+
     let frontFacing = -Infinity
     const spin = this.spin.quaternion
     for (const panel of this.panels) {
-      panel.hover = damp(panel.hover, panel === this.hovered ? 1 : 0, 10, dt)
-      const uniforms = panel.mesh.material.uniforms
-      uniforms.uHover.value = panel.hover
-      if (!this.assembling) {
-        // hovered panels lift off the surface and grow slightly
-        panel.mesh.position.copy(panel.basePosition).multiplyScalar(1 + 0.035 * panel.hover)
-        panel.mesh.scale.setScalar(1 + 0.05 * panel.hover)
-      }
       const facing = scratch.copy(panel.normal).applyQuaternion(spin).z
       if (facing > frontFacing) {
         frontFacing = facing
@@ -885,7 +1119,8 @@ export class PhotoGlobe {
     satellitePositions.setXYZ(1, satelliteB.x, satelliteB.y, satelliteB.z)
     satellitePositions.needsUpdate = true
 
-    const fade = this.shared.uFade.value
+    // the blueprint extras fade out with the morph to the photo sphere
+    const fade = this.shared.uFade.value * this.morph.extras
     for (const material of this.ringMaterials) material.opacity = (material.userData.base ??= material.opacity) * fade
 
     if (this.polarMaterials.length === 2) {

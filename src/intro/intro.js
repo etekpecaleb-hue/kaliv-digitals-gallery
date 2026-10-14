@@ -207,6 +207,8 @@ export class Intro {
     byId('intro-status').textContent = 'Ready'
     const tl = gsap.timeline({ onComplete: () => this.finish() })
     if (this.options.reduced) {
+      // the WebGL wordmark sits outside #intro, so it needs its own fade
+      tl.to(word.textUniforms.uOpacity, { value: 0, duration: 0.3, ease: 'power1.out' }, 0)
       tl.to(this.el, { opacity: 0, duration: 0.45, ease: 'power1.out' }, 0)
       tl.add(this.options.handOver(), 0)
       return

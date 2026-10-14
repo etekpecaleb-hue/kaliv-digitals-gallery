@@ -28,7 +28,8 @@ export class Stage {
     this.canvas = canvas
     this.renderer = new WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.setClearColor(CLEAR_COLOR, 1)
-    this.camera = new PerspectiveCamera(40, 1, 0.1, 4000)
+    // far enough for the whole solar system; the explorer camera sets `near` each frame
+    this.camera = new PerspectiveCamera(40, 1, 0.1, 24000)
     this.camera.position.set(0, 0, 60)
     this.overlayCamera = new OrthographicCamera(-1, 1, 1, -1, -10, 10)
     this.coarse = matchMedia('(pointer: coarse)').matches
