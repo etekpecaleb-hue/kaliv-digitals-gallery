@@ -140,9 +140,9 @@ const SPIN_GLSL = /* glsl */ `
   vec3 spinAround(vec3 p, vec3 axis, float angle) {
     return mix(dot(axis, p) * axis, p, cos(angle)) + cross(axis, p) * sin(angle);
   }
-  // Dark carbon-grey to dusty tan, picked per rock.
+  // Dark carbon-grey to dusty grey-tan, picked per rock.
   vec3 rockTint(float pick) {
-    return mix(vec3(0.55, 0.53, 0.52), vec3(0.86, 0.72, 0.56), pick * pick) * (0.78 + 0.3 * fract(pick * 7.31));
+    return mix(vec3(0.5, 0.49, 0.48), vec3(0.74, 0.66, 0.56), pick * pick) * (0.78 + 0.3 * fract(pick * 7.31));
   }
 `
 
@@ -363,6 +363,14 @@ function orbitingPoints(count, orbits, random, sizeOf, uniforms, look) {
 
 const NEAR_MIN = 30
 const NEAR_MAX = 95
+const HOME_RADIUS = 5
+// Largest radius a drifting rock may show, in radians as seen from the camera.
+const MAX_ANGULAR_SIZE = 0.035
+
+const smoothstep = (edge0, edge1, x) => {
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1)
+  return t * t * (3 - 2 * t)
+}
 
 class DriftingRock {
   constructor(random) {
@@ -395,7 +403,7 @@ class DriftingRock {
 }
 
 function rockMaterial(color) {
-  return new MeshStandardMaterial({ color, vertexColors: true, roughness: 0.93, metalness: 0.02, flatShading: false })
+  return new MeshStandardMaterial({ color, vertexColors: true, roughness: 0.97, metalness: 0, flatShading: false })
 }
 
 // ---------------------------------------------------------------- Belts
@@ -420,7 +428,7 @@ export class Belts {
     system.group.add(this.nearGroup)
 
     this.buildMainBelt(coarse ? 600 : 1400, coarse ? 2200 : 5200)
-    this.buildBeltField(coarse ? 90 : 170, coarse ? 2 : 3)
+    this.buildBeltField(coarse ? 150 : 260, coarse ? 2 : 3)
     this.buildKuiperBelt(coarse ? 600 : 1500)
     this.buildDriftingRocks(24, coarse)
     this.buildFlyBy(coarse)
@@ -507,7 +515,7 @@ export class Belts {
   // flying through it feels like being in it anywhere, not only near Ceres.
   buildBeltField(count, detail) {
     const random = seededRandom(3301)
-    const box = 110
+    const box = 96
     this.field = {
       uniforms: {
         uCameraLocal: { value: new Vector3() },
@@ -590,7 +598,8 @@ export class Belts {
     this.drifters = Array.from({ length: count }, () => new DriftingRock(random))
     const variants = 3
     this.nearMeshes = []
-    const tints = ['#b3a99d', '#9a9590', '#b49a82']
+    // grey carbon to dusty grey-brown, like C- and S-type asteroids
+    const tints = ['#8e8983', '#7a7772', '#948576']
     for (let v = 0; v < variants; v++) {
       const geometry = this.track(
         createRockGeometry({ seed: 401 + v * 29, detail: coarse ? 6 : 9, smooth: true, lumps: 0.38, craters: 9 }),
@@ -607,6 +616,14 @@ export class Belts {
       rock.mesh = this.nearMeshes[i % variants]
       rock.slot = Math.floor(i / variants)
     })
+    this.tmpMatrix = new Matrix4()
+    this.tmpPosition = new Vector3()
+    this.tmpQuaternion = new Quaternion()
+    this.tmpScale = new Vector3()
+    this.tmpView = new Vector3()
+    this.tmpAcross = new Vector3()
+    this.tmpClosest = new Vector3()
+    this.cameraPosition = new Vector3()
     this.updateDrifters(0)
   }
 
@@ -631,15 +648,41 @@ export class Belts {
     }
   }
 
-  updateDrifters(time) {
-    const matrix = this.tmpMatrix ?? (this.tmpMatrix = new Matrix4())
-    const position = this.tmpPosition ?? (this.tmpPosition = new Vector3())
-    const quaternion = this.tmpQuaternion ?? (this.tmpQuaternion = new Quaternion())
-    const scale = this.tmpScale ?? (this.tmpScale = new Vector3())
-    for (const rock of this.drifters) {
+  // `camera` (world position) lets rocks get out of the way: they shrink away
+  // when they come close to the lens or drift in front of the globe.
+  updateDrifters(time, camera = null) {
+    const matrix = this.tmpMatrix
+    const position = this.tmpPosition
+    const quaternion = this.tmpQuaternion
+    const scale = this.tmpScale
+    const toRock = this.tmpView
+    let homeDistance = 0
+    let globeAngle = 0
+    if (camera) {
+      homeDistance = camera.length()
+      globeAngle = Math.asin(Math.min(1, (HOME_RADIUS + 1.5) / Math.max(homeDistance, HOME_RADIUS + 1.5)))
+    }
+    for (let i = 0; i < this.drifters.length; i++) {
+      const rock = this.drifters[i]
       rock.positionAt(time, position)
       quaternion.setFromAxisAngle(rock.axis, rock.spinPhase + rock.spinRate * time)
-      scale.copy(rock.stretch).multiplyScalar(rock.size)
+      let size = rock.size
+      if (camera) {
+        const reach = rock.size * 1.4
+        toRock.subVectors(position, camera)
+        const distance = toRock.length()
+        size *= smoothstep(3, 14, distance - reach)
+        // never a boulder filling a corner of the view: cap its angular size
+        const cap = distance * MAX_ANGULAR_SIZE
+        size = (size * cap) / Math.sqrt(size * size + cap * cap)
+        // in front of the globe: compare its direction with the globe's
+        if (distance < homeDistance) {
+          const cos = -toRock.dot(camera) / (distance * homeDistance)
+          const angle = Math.acos(clamp(cos, -1, 1)) - Math.atan(reach / distance)
+          size *= smoothstep(globeAngle, globeAngle * 1.35 + 0.02, angle)
+        }
+      }
+      scale.copy(rock.stretch).multiplyScalar(Math.max(size, 1e-4))
       matrix.compose(position, quaternion, scale)
       rock.mesh.setMatrixAt(rock.slot, matrix)
     }
@@ -650,9 +693,9 @@ export class Belts {
   // clears home by 25-60 u, at 45-90 u/s.
   launchFlyBy(camera) {
     const s = this.flyState
-    const view = this.tmpView ?? (this.tmpView = new Vector3())
-    const across = this.tmpAcross ?? (this.tmpAcross = new Vector3())
-    const closest = this.tmpClosest ?? (this.tmpClosest = new Vector3())
+    const view = this.tmpView
+    const across = this.tmpAcross
+    const closest = this.tmpClosest
     camera.getWorldDirection(view)
     across.set(gaussian(Math.random), gaussian(Math.random), gaussian(Math.random))
     across.addScaledVector(view, -across.dot(view)).normalize()
@@ -703,7 +746,8 @@ export class Belts {
       updateScreen(this.system.renderer, ctx.camera)
       this.updateBeltField(ctx)
     }
-    this.updateDrifters(time)
+    const camera = ctx.camera ? this.cameraPosition.setFromMatrixPosition(ctx.camera.matrixWorld) : null
+    this.updateDrifters(time, camera)
     this.updateFlyBy(dt, ctx.camera)
   }
 

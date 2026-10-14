@@ -50,10 +50,12 @@ const SURFACE_FRAGMENT = /* glsl */ `
     float spots = base.b * uMapMix;
     float faculae = base.a * uMapMix;
 
-    float limb = 1.0 - 0.6 * (1.0 - mu) - 0.2 * (1.0 - mu) * (1.0 - mu);
-    float heat = limb * (0.9 + 0.3 * (granules - 0.5) + 0.16 * (mottle - 0.5));
-    heat = heat * (1.0 - 0.62 * spots) + faculae * 0.16 * (1.0 - mu);
-    vec3 color = heatColor(heat) * (0.55 + 1.05 * heat);
+    // limb darkening (Eddington-like), then granulation, mottling and spots
+    float limb = 1.0 - 0.56 * (1.0 - mu) - 0.24 * (1.0 - mu) * (1.0 - mu);
+    float heat = limb * (0.86 + 0.36 * (granules - 0.5) + 0.18 * (mottle - 0.5));
+    heat = heat * (1.0 - 0.66 * spots) + faculae * 0.18 * (1.0 - mu);
+    // the centre peaks just under white so granulation stays visible up close
+    vec3 color = heatColor(heat) * (0.32 + 0.78 * heat);
     gl_FragColor = vec4(color, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -84,6 +86,7 @@ const CORONA_VERTEX = /* glsl */ `
   uniform float uViewportHeight;
   uniform float uStreakPx;
   varying vec2 vPx;
+  varying vec2 vQuad;
   varying float vSunPx;
   void main() {
     vec4 center = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
@@ -92,22 +95,30 @@ const CORONA_VERTEX = /* glsl */ `
     float sunPx = uRadius / sqrt(max(dist * dist - uRadius * uRadius, 1.0)) * focal;
     // sit just in front of the Sun so the sphere never hides the glow
     vec3 anchor = center.xyz - center.xyz / dist * uRadius * 1.04;
-    float halfPx = min(max(sunPx * 7.0, uStreakPx), uViewportHeight * 4.0);
+    // big enough for the corona and for the streak to fade out completely
+    float halfPx = min(max(sunPx * 5.0, uStreakPx * 2.3), uViewportHeight * 4.0);
     vec3 offset = vec3(position.xy * halfPx * (-anchor.z / focal), 0.0);
     vPx = position.xy * halfPx;
+    vQuad = position.xy;
     vSunPx = sunPx;
     gl_Position = anchor.z < -0.01 ? projectionMatrix * vec4(anchor + offset, 1.0) : vec4(2.0, 2.0, 2.0, 1.0);
   }
 `
 
+// Three layers: the corona itself (sized in solar radii, so it grows as you
+// approach), lens glare round the disc (sized in pixels and capped, so a Sun
+// that fills the view never washes the whole frame) and flare streaks (a
+// soft anamorphic line plus six faint rays) that matter most from afar.
 const CORONA_FRAGMENT = /* glsl */ `
   uniform float uTime;
   uniform float uFlare;
   uniform float uGlow;
   uniform float uStreakPx;
+  uniform float uViewportHeight;
   uniform float uPixelRatio;
   uniform vec3 uStreakColor;
   varying vec2 vPx;
+  varying vec2 vQuad;
   varying float vSunPx;
   ${SIMPLEX_GLSL}
 
@@ -115,31 +126,41 @@ const CORONA_FRAGMENT = /* glsl */ `
     float len = length(vPx);
     float r = len / vSunPx;
     float outside = max(r - 1.0, 0.0);
-    vec2 dir = vPx / max(len, 1e-3);
-    // streamers: noise around the rim, slowly evolving
-    float s = 0.5 + 0.5 * snoise(vec3(dir * 1.7, uTime * 0.02));
-    s = 0.6 * s + 0.4 * (0.5 + 0.5 * snoise(vec3(dir * 4.5, uTime * 0.035 + 3.0)));
-    float inner = exp(-outside * 6.0);
-    float corona = exp(-outside / (0.18 + 0.6 * s * s)) * (0.45 + 0.55 * s);
-    float halo = 1.0 / (1.0 + outside * outside * 3.0);
-    float overDisc = 1.0 - smoothstep(0.9, 1.0, r);
-    vec3 glow = vec3(1.0, 0.95, 0.85) * inner * 0.8 + vec3(1.0, 0.78, 0.48) * corona * 0.42 + vec3(1.0, 0.62, 0.32) * halo * 0.09;
-    glow *= mix(1.0, 0.18, overDisc);
+    float outsidePx = max(len - vSunPx, 0.0);
+    float overDisc = 1.0 - smoothstep(0.92, 1.0, r);
 
-    // flare: a soft anamorphic streak plus six faint diffraction rays (pixels)
+    vec3 glow = vec3(0.0);
+    if (outside < 4.0) {
+      // streamers: noise around the rim, slowly evolving
+      vec2 dir = vPx / max(len, 1e-3);
+      float s = 0.5 + 0.5 * snoise(vec3(dir * 1.7, uTime * 0.02));
+      s = 0.6 * s + 0.4 * (0.5 + 0.5 * snoise(vec3(dir * 4.5, uTime * 0.035 + 3.0)));
+      float inner = exp(-outside * 7.0);
+      float corona = exp(-outside / (0.12 + 0.5 * s * s)) * (0.4 + 0.6 * s);
+      glow = vec3(1.0, 0.93, 0.8) * inner * 0.7 + vec3(1.0, 0.76, 0.45) * corona * 0.36;
+    }
+    float glareRadius = min(0.035 * uViewportHeight + 0.22 * vSunPx, 0.09 * uViewportHeight);
+    float glare = exp(-outsidePx / glareRadius) * 0.3 + exp(-outsidePx / (glareRadius * 3.5)) * 0.035;
+    glow += vec3(1.0, 0.84, 0.62) * glare;
+    glow *= mix(1.0, 0.05, overDisc);
+
+    // flare streaks, in pixels
     float px = uPixelRatio;
-    float streak = exp(-abs(vPx.y) / (1.4 * px + vSunPx * 0.035)) * exp(-pow(abs(vPx.x) / uStreakPx, 1.3) * 2.2);
+    float streakLength = uStreakPx + vSunPx;
+    float streak = exp(-abs(vPx.y) / (1.2 * px + vSunPx * 0.02)) * exp(-pow(abs(vPx.x) / streakLength, 1.5) * 2.6);
     float rays = 0.0;
+    float rayLength = 0.35 * uStreakPx + 0.6 * vSunPx;
     for (int i = 0; i < 3; i++) {
       float a = 0.35 + float(i) * 1.0471976;
       vec2 axis = vec2(cos(a), sin(a));
       float across = abs(dot(vPx, vec2(-axis.y, axis.x)));
       float along = abs(dot(vPx, axis));
-      rays += exp(-across / (0.9 * px + vSunPx * 0.01)) * exp(-along / (uStreakPx * 0.22 + vSunPx));
+      rays += exp(-across / (0.8 * px + vSunPx * 0.006)) * exp(-along / rayLength);
     }
-    float core = exp(-outside * 1.6) * 0.25;
-    vec3 flare = uStreakColor * streak * 0.6 + vec3(1.0, 0.93, 0.82) * (rays * 0.22 + core);
-    vec3 color = (glow + flare * uFlare * (1.0 - overDisc * 0.6)) * uGlow;
+    vec3 flare = uStreakColor * streak * 0.3 + vec3(1.0, 0.93, 0.82) * rays * 0.1;
+    // everything fades out before the quad's edge
+    float edge = 1.0 - smoothstep(0.8, 1.0, max(abs(vQuad.x), abs(vQuad.y)));
+    vec3 color = (glow + flare * uFlare * (1.0 - overDisc * 0.85)) * uGlow * edge;
     gl_FragColor = vec4(color, 1.0);
     #include <colorspace_fragment>
   }
@@ -183,7 +204,7 @@ export class SunCorona {
     this.renderer.getDrawingBufferSize(this.viewport)
     u.uViewportHeight.value = this.viewport.y
     u.uPixelRatio.value = this.renderer.getPixelRatio()
-    u.uStreakPx.value = Math.max(this.viewport.x, this.viewport.y) * 0.42
+    u.uStreakPx.value = Math.max(this.viewport.x, this.viewport.y) * 0.16
     if (!ctx.reduced) u.uTime.value += dt
     // the closer we get, the less the lens flare matters
     const distance = ctx.camera.position.distanceTo(ctx.sunPosition)

@@ -128,7 +128,8 @@ function tube(radiusFront, radiusBack, length, segments = 10) {
   return geometry
 }
 
-// Disc facing backwards (-Z), for glowing nozzles.
+// Disc facing backwards (-Z), for glowing nozzles. Placed a few thousandths
+// behind the nozzle's end cap so the two never z-fight.
 function nozzleDisc(radius) {
   const geometry = new CircleGeometry(radius, 12)
   geometry.rotateY(Math.PI)
@@ -154,7 +155,7 @@ export function buildShuttle() {
     .pair(() => new BoxGeometry(0.006, 0.012, 0.5), { color: SIGNAL, glow: 0.9, at: [0.089, 0.0, 0.03] })
   for (const [x, y] of [[0, 0.028], [0.046, -0.022], [-0.046, -0.022]]) {
     kit.add(tube(0.028, 0.036, 0.07, 10), { color: METAL, metal: 0.7, rough: 0.35, at: [x, y, -0.335] })
-    kit.add(nozzleDisc(0.028), { color: SIGNAL_HI, glow: 1.3, at: [x, y, -0.371] })
+    kit.add(nozzleDisc(0.028), { color: SIGNAL_HI, glow: 1.3, at: [x, y, -0.376] })
     kit.engine([x, y, -0.39], '#8fbaff', 0.075)
   }
   kit.nav([0.37, -0.035, -0.25], 'red').nav([-0.37, -0.035, -0.25], 'green').nav([0, 0.255, -0.33], 'white')
@@ -171,7 +172,7 @@ export function buildCourier() {
     .pair((m) => plate([[0.33, -0.17], [0.38, -0.2], [0.4, -0.28], [0.34, -0.25]], 0.024, m), { color: '#ff9a3c', glow: 0.5, at: [0, -0.01, 0] })
     .pair(() => tube(0.045, 0.056, 0.44, 8), { color: '#565f6d', metal: 0.55, rough: 0.4, at: [0.16, 0, -0.17] })
     .pair(() => new BoxGeometry(0.008, 0.01, 0.3), { color: '#5ff0ff', glow: 1.2, at: [0.205, 0.0, -0.14] })
-    .pair(() => nozzleDisc(0.045), { color: '#5fd8f0', glow: 1.4, at: [0.16, 0, -0.392] })
+    .pair(() => nozzleDisc(0.045), { color: '#5fd8f0', glow: 1.4, at: [0.16, 0, -0.397] })
     .add(fin([[-0.3, 0.02], [-0.12, 0.02], [-0.26, 0.13], [-0.31, 0.13]], 0.014), { color: '#a9b1be' })
   kit.engine([0.16, 0, -0.41], '#7ff2ff', 0.095).engine([-0.16, 0, -0.41], '#7ff2ff', 0.095)
   kit.nav([0.4, -0.01, -0.27], 'red').nav([-0.4, -0.01, -0.27], 'green').nav([0, 0.135, -0.3], 'white')
@@ -212,10 +213,10 @@ export function buildCruiser() {
   kit.add(new BoxGeometry(0.175, 0.02, 0.135), { color: HULL_DARK, at: [0, 0.04, -0.34] })
   for (const [x, y] of [[0.045, 0.036], [-0.045, 0.036], [0.045, -0.036], [-0.045, -0.036]]) {
     kit.add(tube(0.032, 0.048, 0.075, 12), { color: '#2f343c', metal: 0.75, rough: 0.3, at: [x, y, -0.442] })
-    kit.add(nozzleDisc(0.044), { color: '#7fa9ff', glow: 1.5, at: [x, y, -0.4795] })
-    kit.engine([x, y, -0.5], '#9cc7ff', 0.11)
+    kit.add(nozzleDisc(0.044), { color: '#7fa9ff', glow: 1.1, at: [x, y, -0.486] })
+    kit.engine([x, y, -0.5], '#9cc7ff', 0.07)
   }
-  kit.engine([0, 0, -0.56], '#5d8cff', 0.34)
+  kit.engine([0, 0, -0.58], '#5d8cff', 0.2)
   kit.nav([0.295, 0, -0.22], 'red').nav([-0.295, 0, -0.22], 'green').nav([0, 0.13, 0.34], 'white').nav([0, 0.07, -0.34], 'white')
   return kit.build(2.5, 0.05)
 }

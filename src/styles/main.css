@@ -145,15 +145,15 @@ a {
   stroke-width: 3px;
   stroke-dasharray: 4 6;
 }
-.brand__c,
-.brand__3 {
+.brand__k,
+.brand__d {
   fill: none;
   stroke-width: 10px;
 }
-.brand__c {
+.brand__k {
   stroke: var(--ink);
 }
-.brand__3 {
+.brand__d {
   stroke: var(--signal-hi);
 }
 .brand__word {
@@ -162,6 +162,9 @@ a {
   text-transform: uppercase;
   font-size: 0.8125rem;
   font-weight: 600;
+  /* the tracking after the last letter would widen the gap to the tag */
+  margin-right: -0.16em;
+  white-space: nowrap;
 }
 .brand__tag {
   border: 1px solid var(--line-strong);
@@ -730,10 +733,10 @@ a {
   fill: none;
   stroke-width: 9px;
 }
-.emblem__c {
+.emblem__k {
   stroke: var(--ink);
 }
-.emblem__3 {
+.emblem__d {
   stroke: var(--signal-hi);
 }
 .intro__word {
@@ -744,6 +747,8 @@ a {
 .intro__sub {
   color: var(--signal-hi);
   letter-spacing: 0.42em;
+  /* balances the tracking after the last letter so the line sits centred */
+  text-indent: 0.42em;
   text-align: center;
   margin: 0;
 }
@@ -835,12 +840,25 @@ a {
   }
 }
 @media (max-width: 640px) {
-  .brand__word,
   .add span {
     display: none;
   }
   .add {
     padding: 0 12px;
+  }
+  /* mark + "KALIV" stay; the actions keep room for five 40-44 px buttons */
+  .brand {
+    gap: 8px;
+  }
+  .brand__word {
+    font-size: 0.75rem;
+    letter-spacing: 0.14em;
+    margin-right: -0.14em;
+  }
+  /* centre the reticle and wordmark in the band between the meta and the log */
+  .intro__center {
+    top: calc(var(--safe-t) + 56px);
+    bottom: calc(var(--safe-b) + var(--gutter) + 104px + 7 * 1.9 * var(--step--2) + 12px);
   }
   .hint,
   .readout__item--fps,
@@ -854,11 +872,41 @@ a {
     left: calc(var(--gutter) + 22px);
     width: auto;
   }
+  .intro__meta {
+    font-size: 0.5625rem;
+  }
+  .intro__sub {
+    font-size: var(--step--2);
+    letter-spacing: 0.26em;
+    text-indent: 0.26em;
+  }
+}
+@media (max-width: 479px) {
+  /* the tag only fits beside five 44 px header buttons from 480 px up */
   .brand__tag {
     display: none;
   }
-  .intro__meta {
-    font-size: 0.5625rem;
+}
+@media (max-width: 379px) {
+  /* too narrow for the word next to five header buttons */
+  .brand__word {
+    display: none;
+  }
+  .intro__sub {
+    letter-spacing: 0.18em;
+    text-indent: 0.18em;
+  }
+}
+@media (max-width: 339px) {
+  .intro__sub {
+    letter-spacing: 0.1em;
+    text-indent: 0.1em;
+  }
+}
+@media (max-width: 640px) and (max-height: 700px) {
+  /* short phones: a smaller reticle keeps the column clear of the meta */
+  .reticle {
+    width: 140px;
   }
 }
 @media (pointer: coarse) {

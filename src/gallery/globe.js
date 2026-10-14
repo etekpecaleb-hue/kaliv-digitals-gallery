@@ -149,7 +149,7 @@ function ringLine(radius, material) {
 }
 
 // The emblem printed on both polar caps: a dashed ring, a thin ring and the
-// C3 mark, white on transparent (the cap material tints it).
+// KD mark drawn at stroke 9, white on transparent (the cap material tints it).
 export function drawPolarEmblem() {
   const canvas = document.createElement('canvas')
   canvas.width = canvas.height = 512
@@ -172,18 +172,23 @@ export function drawPolarEmblem() {
   ctx.arc(0, 0, 52, 0, Math.PI * 2)
   ctx.stroke()
 
-  const deg = Math.PI / 180
   ctx.lineWidth = 9
-  // C
+  ctx.lineJoin = 'miter'
   ctx.beginPath()
-  ctx.arc(-15.5, 0, 30, -48 * deg, 48 * deg, true)
-  ctx.stroke()
-  // 3: upper and lower bowls
-  ctx.beginPath()
-  ctx.arc(30.5, -15, 15, -155 * deg, 100 * deg)
-  ctx.stroke()
-  ctx.beginPath()
-  ctx.arc(30.5, 15, 15, -100 * deg, 155 * deg)
+  // K: stem, arm, and the leg springing from the arm
+  ctx.moveTo(-34.8, -28)
+  ctx.lineTo(-34.8, 28)
+  ctx.moveTo(-34.8, 5)
+  ctx.lineTo(-7.8, -25)
+  ctx.moveTo(-22.6, -8.5)
+  ctx.lineTo(-6.8, 26.1)
+  // D: stem and a half-disc bowl
+  ctx.moveTo(10.3, -28)
+  ctx.lineTo(10.3, 28)
+  ctx.moveTo(10.3, -23.5)
+  ctx.lineTo(13.3, -23.5)
+  ctx.arc(13.3, 0, 23.5, -Math.PI / 2, Math.PI / 2)
+  ctx.lineTo(10.3, 23.5)
   ctx.stroke()
 
   const texture = new CanvasTexture(canvas)

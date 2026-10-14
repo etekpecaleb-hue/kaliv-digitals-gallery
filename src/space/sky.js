@@ -58,7 +58,8 @@ const SKY_RECIPE = {
 
       vec3 cool = vec3(0.62, 0.72, 1.0);
       vec3 warm = vec3(1.0, 0.86, 0.7);
-      vec3 color = mix(cool, warm, clamp(bulge * 1.3 + core * toCenter * 0.3, 0.0, 1.0)) * density * 0.026;
+      // kept dim and cool so the band sits behind the twinkling stars and the FUI blues
+      vec3 color = mix(cool, warm, clamp(bulge * 1.2 + core * toCenter * 0.15, 0.0, 1.0)) * density * 0.018;
       // a few soft nebulae in signal blues, violet and teal
       color += vec3(0.14, 0.3, 1.0) * nebula(d, vec3(0.62, 0.28, 0.73), 0.32, 1.0) * 0.018;
       color += vec3(0.42, 0.22, 0.95) * nebula(d, vec3(-0.75, -0.35, 0.56), 0.26, 4.0) * 0.016;
@@ -170,5 +171,6 @@ export class Sky {
     this.mesh.geometry.dispose()
     this.mesh.material.dispose()
     if (this.ownsBaker) this.baker.dispose()
+    else this.baker.release(this.job)
   }
 }

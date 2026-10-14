@@ -105,6 +105,7 @@ export class TextureBaker {
     // texels per frame; phones get a quarter of the desktop budget
     this.budget = coarse ? 65536 : 262144
     this.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy())
+    this.parallelCompile = Boolean(renderer.compileAsync) && renderer.extensions.has('KHR_parallel_shader_compile')
     this.scene = new Scene()
     this.camera = new OrthographicCamera(-1, 1, 1, -1, 0, 1)
     this.quad = new Mesh(new PlaneGeometry(2, 2))
@@ -113,7 +114,9 @@ export class TextureBaker {
   }
 
   get pending() {
-    return this.jobs.filter((job) => !job.done).length
+    let count = 0
+    for (const job of this.jobs) if (!job.done) count++
+    return count
   }
 
   // Queues `pass` ('albedo' | 'normal' | 'data') of `recipe` (a key of RECIPES or
@@ -217,7 +220,8 @@ export class TextureBaker {
       job.compileMs = performance.now() - job.startedAt
       if (job.state === 'compiling') job.state = 'ready'
     }
-    if (this.renderer.compileAsync) this.renderer.compileAsync(this.quad, this.camera, this.scene).then(ready, ready)
+    // without the extension compileAsync only polls (and warns): compile now
+    if (this.parallelCompile) this.renderer.compileAsync(this.quad, this.camera, this.scene).then(ready, ready)
     else ready()
   }
 
@@ -261,6 +265,19 @@ export class TextureBaker {
       totalMs: Math.round(performance.now() - job.startedAt),
     })
     job.onDone?.(job)
+  }
+
+  // Drops a job (queued or done) and frees its texture.
+  release(job) {
+    const index = this.jobs.indexOf(job)
+    if (index < 0) return
+    this.jobs.splice(index, 1)
+    if (this.active === job) this.active = null
+    job.material?.dispose()
+    job.material = null
+    job.state = 'released'
+    job.done = true
+    job.target.dispose()
   }
 
   dispose() {

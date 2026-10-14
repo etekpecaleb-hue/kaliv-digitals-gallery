@@ -157,14 +157,17 @@ class ShootingStar {
     return target.copy(this.start).applyAxisAngle(this.axis, angle).multiplyScalar(SKY_DISTANCE)
   }
 
+  // Accelerating, like a meteor burning in.
+  eased(t) {
+    return this.duration * (t / this.duration) ** 1.4
+  }
+
   update(dt) {
     if (!this.active) return
     this.life += dt
     const { life, duration } = this
-    // Accelerating, like a meteor burning in.
-    const eased = (t) => duration * (t / duration) ** 1.4
-    this.directionAt(eased(life), this.uniforms.uHead.value)
-    this.directionAt(eased(Math.max(0, life - this.tailLag)), this.uniforms.uTail.value)
+    this.directionAt(this.eased(life), this.uniforms.uHead.value)
+    this.directionAt(this.eased(Math.max(0, life - this.tailLag)), this.uniforms.uTail.value)
     const fadeIn = smoothstep(0, 0.12, life)
     const fadeOut = 1 - smoothstep(duration * 0.6, duration, life)
     this.uniforms.uAlpha.value = fadeIn * fadeOut * this.brightness
@@ -238,6 +241,12 @@ const DUST_LAYERS = [
   { box: 260, share: 0.33 },
   { box: 2600, share: 0.25 },
 ]
+
+// A layer shows while the camera crosses a fair share of its box per second.
+function dustLayerAlpha(speed, box) {
+  const ratio = speed / box
+  return smoothstep(0.05, 0.45, ratio) * (1 - smoothstep(4, 12, ratio)) * 0.8
+}
 
 function dustMesh(count, random, uniforms) {
   // aSeed = (x, y, z in the unit box, layer); aCorner = (head?, side, brightness)
@@ -387,7 +396,7 @@ export class SpaceEffects {
       streaks: 0.35,
     })
     this.comet.add(this.ionTail.mesh, this.dustTail.mesh)
-    this.coma = new GlowPoints(3, { minPx: 2.5, maxPx: 420 })
+    this.coma = new GlowPoints(3, { minPx: 2.5, maxPx: 420, lift: 1.2 })
     this.coma.define(0, { color: '#7fc4ff', size: 18, intensity: 0.5 })
     this.coma.define(1, { color: '#d9f1ff', size: 5, intensity: 0.9 })
     this.coma.define(2, { color: '#ffffff', size: 1.2, intensity: 1 })
@@ -412,7 +421,9 @@ export class SpaceEffects {
     const ionLength = 12 + 320 * activity
     for (let i = 0; i < ion.count; i++) {
       const s = (i / (ion.count - 1)) * ionLength
-      ion.points.set([antiSun.x * s, antiSun.y * s, antiSun.z * s], i * 3)
+      ion.points[i * 3] = antiSun.x * s
+      ion.points[i * 3 + 1] = antiSun.y * s
+      ion.points[i * 3 + 2] = antiSun.z * s
     }
     ion.commit()
     ion.material.uniforms.uOpacity.value = 0.15 + 0.7 * activity
@@ -427,7 +438,9 @@ export class SpaceEffects {
       const f = i / (dust.count - 1)
       const s = f * dustLength
       const bend = 0.42 * dustLength * f * f
-      dust.points.set([antiSun.x * s - v.x * bend, antiSun.y * s - v.y * bend, antiSun.z * s - v.z * bend], i * 3)
+      dust.points[i * 3] = antiSun.x * s - v.x * bend
+      dust.points[i * 3 + 1] = antiSun.y * s - v.y * bend
+      dust.points[i * 3 + 2] = antiSun.z * s - v.z * bend
     }
     dust.commit()
     dust.material.uniforms.uOpacity.value = 0.12 + 0.45 * activity
@@ -486,11 +499,7 @@ export class SpaceEffects {
     const speed = this.cameraVelocity.length()
     this.cameraSpeed = speed
     const alpha = this.dustUniforms.uLayerAlpha.value
-    const layer = (box) => {
-      const ratio = speed / box
-      return smoothstep(0.05, 0.45, ratio) * (1 - smoothstep(4, 12, ratio)) * 0.8
-    }
-    alpha.set(layer(DUST_LAYERS[0].box), layer(DUST_LAYERS[1].box), layer(DUST_LAYERS[2].box))
+    alpha.set(dustLayerAlpha(speed, DUST_LAYERS[0].box), dustLayerAlpha(speed, DUST_LAYERS[1].box), dustLayerAlpha(speed, DUST_LAYERS[2].box))
     this.dust.visible = alpha.x + alpha.y + alpha.z > 0.01
     this.dustUniforms.uVelocity.value.copy(this.cameraVelocity)
     this.dustUniforms.uWidth.value = 0.9 * SCREEN.uPixelRatio.value
@@ -505,7 +514,8 @@ export class SpaceEffects {
     const idle = nearHome && this.cameraRest > 2
     this.nextStar -= dt
     if (this.nextStar > 0) return
-    const star = this.stars.find((s) => !s.active)
+    let star = null
+    for (const candidate of this.stars) if (!candidate.active) star = candidate
     if (star) {
       camera.updateMatrixWorld()
       star.launch(camera, this.random)

@@ -120,11 +120,11 @@ const moon = /* glsl */ `
 
     float fresh = 0.0;
     float older = 1.0 - m * 0.85;
-    h = craterField(p, 3.5, 0.45, 11.0, fresh) * 0.35 * older;
-    h += craterField(p, 8.0, 0.55, 12.0, fresh) * 0.35 * older;
-    h += craterField(p, 18.0, 0.6, 13.0, fresh) * 0.35 * (1.0 - m * 0.5);
-    h += craterField(p, 40.0, 0.65, 14.0, fresh) * 0.35;
-    h += craterField(p, 90.0, 0.7, 15.0, fresh) * 0.3;
+    h = craterField(p, 3.5, 0.3, 11.0, fresh) * 0.22 * older;
+    h += craterField(p, 8.0, 0.5, 12.0, fresh) * 0.28 * older;
+    h += craterField(p, 18.0, 0.6, 13.0, fresh) * 0.3 * (1.0 - m * 0.6);
+    h += craterField(p, 40.0, 0.65, 14.0, fresh) * 0.3;
+    h += craterField(p, 90.0, 0.7, 15.0, fresh) * 0.26;
     h += fbm(p * 6.0, 5) * 0.006 - m * 0.006;
 
     vec3 highland = mix(vec3(0.58, 0.57, 0.55), vec3(0.73, 0.72, 0.69), 0.5 + 0.5 * fbm(p * 4.0 + 2.0, 5));
@@ -168,18 +168,20 @@ const venus = /* glsl */ `
     h = 0.0;
     float lat = latDeg(p);
     float lon = atan(p.x, p.z);
-    vec3 q = warp3(p, 1.4, 0.28);
-    // the cloud deck streams east-west, so stretch the noise along latitude
-    float bands = fbm(vec3(q.x * 1.3, q.y * 5.0, q.z * 1.3), 5);
-    float swirl = fbm(q * 2.4 + bands * 1.2, 4);
-    float t = sstep(-0.5, 0.5, bands * 0.8 + swirl * 0.35);
-    col = mix(vec3(0.83, 0.67, 0.43), vec3(0.97, 0.92, 0.79), t);
+    vec3 q = warp3(p, 1.6, 0.16);
+    // the cloud deck streams east-west: noise stretched along latitude
+    float streaks = fbm(vec3(q.x * 1.1, q.y * 9.0, q.z * 1.1), 6);
+    float swirl = fbm(q * 3.2 + streaks * 1.4, 4);
+    float t = sstep(-0.6, 0.6, streaks * 0.75 + swirl * 0.3);
+    col = mix(vec3(0.85, 0.74, 0.54), vec3(0.97, 0.92, 0.8), t);
+    col *= 0.97 + 0.05 * fbm(vec3(q.x * 3.0, q.y * 28.0, q.z * 3.0), 3);
     // the dark sideways "Y" of the upper clouds
     float lonRel = atan(sin(lon - 0.6), cos(lon - 0.6));
     float arm = abs(abs(radians(lat)) - 0.5 * max(lonRel + 0.4, 0.0));
-    float chevron = exp(-pow(arm / 0.13, 2.0)) * band(lonRel, -1.3, 1.4, 0.4);
-    col *= 1.0 - chevron * 0.16 * (0.6 + 0.4 * swirl);
-    col = mix(col, vec3(0.96, 0.93, 0.85), sstep(55.0, 80.0, abs(lat)) * 0.55);
+    float chevron = exp(-pow(arm / 0.14, 2.0)) * band(lonRel, -1.3, 1.4, 0.4);
+    col *= 1.0 - chevron * 0.12 * (0.6 + 0.4 * swirl);
+    // bright polar collars
+    col = mix(col, vec3(0.97, 0.94, 0.87), sstep(52.0, 78.0, abs(lat)) * 0.5);
   }
 `
 
@@ -213,23 +215,26 @@ const mars = /* glsl */ `
     float canyon = max(valles, branches * 0.6);
 
     float capEdge = 0.035 * fbm(p * 7.0, 4);
-    float capN = sstep(76.0, 79.0, lat + capEdge * 57.0);
-    float capS = sstep(80.0, 83.0, -lat + capEdge * 57.0);
+    float capN = sstep(71.0, 75.0, lat + capEdge * 57.0);
+    float capS = sstep(74.0, 78.0, -lat + capEdge * 57.0);
     float troughs = sstep(0.6, 0.85, ridged(p * 7.0 + 2.0, 3)) * 0.35;
 
     float fresh = 0.0;
     float highlands = sstep(10.0, -25.0, lat + 18.0 * sin(radians(lon)));
-    float craters = craterField(p, 6.0, 0.45, 21.0, fresh) * 0.3;
-    craters += craterField(p, 14.0, 0.55, 22.0, fresh) * 0.3;
-    craters += craterField(p, 32.0, 0.6, 23.0, fresh) * 0.25;
-    h = craters * (0.3 + 0.7 * highlands) + tharsis * 0.012 + volcano * 0.02 - canyon * 0.012;
+    // from orbit Mars is its albedo markings; craters only roughen the highlands
+    float craters = craterField(p, 6.0, 0.3, 21.0, fresh) * 0.1;
+    craters += craterField(p, 14.0, 0.45, 22.0, fresh) * 0.11;
+    craters += craterField(p, 32.0, 0.55, 23.0, fresh) * 0.1;
+    h = craters * (0.15 + 0.85 * highlands) + tharsis * 0.012 + volcano * 0.02 - canyon * 0.014;
     h += -hellas * 0.01 + fbm(p * 5.0, 5) * 0.006;
 
     vec3 bright = vec3(0.82, 0.55, 0.35);
     vec3 rust = vec3(0.69, 0.37, 0.21);
     vec3 darkCol = vec3(0.37, 0.24, 0.17);
     col = mix(bright, rust, sstep(-0.35, 0.35, fbm(p * 4.0 + 2.0, 5)));
-    col = mix(col, darkCol, dark * 0.85);
+    col = mix(col, darkCol, dark * 0.9);
+    // bright dust streaks trailing off craters
+    col = mix(col, bright * 1.04, fresh * 0.25);
     col = mix(col, vec3(0.86, 0.62, 0.43), hellas * 0.5 + argyre * 0.3);
     col = mix(col, vec3(0.5, 0.27, 0.17), canyon * 0.85);
     vec3 ice = vec3(0.94, 0.93, 0.91) * (1.0 - troughs);
@@ -321,8 +326,8 @@ const jupiter = /* glsl */ `
 const saturn = /* glsl */ `
   void surface(vec3 p, out vec3 col, out float h) {
     h = 0.0;
-    vec3 q = warp3(p, 3.0, 0.025);
-    float l = latDeg(q) + fbm(vec3(q.x * 2.0, q.y * 14.0, q.z * 2.0), 5) * 1.3;
+    vec3 q = warp3(p, 3.0, 0.02);
+    float l = latDeg(q) + fbm(vec3(q.x * 2.0, q.y * 14.0, q.z * 2.0), 5) * 0.9;
     vec3 base = vec3(0.89, 0.8, 0.61);
     vec3 light = vec3(0.95, 0.89, 0.73);
     vec3 dark = vec3(0.76, 0.64, 0.45);
@@ -332,16 +337,17 @@ const saturn = /* glsl */ `
     c = mix(c, dark * 1.04, band(l, 31.0, 39.0, 3.0) * 0.32);
     c = mix(c, dark * 1.04, band(l, -41.0, -33.0, 3.0) * 0.3);
     c = mix(c, dark * 1.06, band(l, 47.0, 54.0, 2.5) * 0.25);
-    c *= 0.975 + 0.05 * sin(l * 1.35 + fbm(q * 6.0, 3)) + 0.03 * fbm(vec3(q.x * 3.0, q.y * 40.0, q.z * 3.0), 3);
+    // fine banding: thin, soft, never a regular ripple
+    c *= 0.985 + 0.03 * fbm(vec3(q.x * 2.5, q.y * 34.0, q.z * 2.5), 4) + 0.015 * fbm(vec3(q.x * 5.0, q.y * 80.0, q.z * 5.0), 3);
     // the north polar hexagon
     float r = 90.0 - l;
     float az = atan(p.z, p.x);
     float sector = mod(az + 0.3, PI / 3.0) - PI / 6.0;
     float hex = r * cos(sector) / cos(PI / 6.0);
-    vec3 polar = vec3(0.7, 0.71, 0.68);
-    c = mix(c, polar, (1.0 - sstep(12.0, 14.5, hex)) * 0.45);
-    c = mix(c, polar * 0.85, exp(-pow((hex - 14.0) / 1.2, 2.0)) * 0.3);
-    c = mix(c, vec3(0.66, 0.58, 0.45), sstep(60.0, 85.0, -l) * 0.5);
+    vec3 polar = vec3(0.7, 0.73, 0.74);
+    c = mix(c, polar, (1.0 - sstep(11.0, 15.0, hex)) * 0.3);
+    c = mix(c, polar * 0.88, exp(-pow((hex - 14.0) / 1.6, 2.0)) * 0.14);
+    c = mix(c, vec3(0.7, 0.64, 0.52), sstep(60.0, 85.0, -l) * 0.4);
     col = c;
   }
 `
@@ -349,13 +355,14 @@ const saturn = /* glsl */ `
 const uranus = /* glsl */ `
   void surface(vec3 p, out vec3 col, out float h) {
     h = 0.0;
-    float l = latDeg(p) + fbm(vec3(p.x * 2.0, p.y * 10.0, p.z * 2.0), 4) * 1.5;
+    float l = latDeg(p) + fbm(vec3(p.x * 2.0, p.y * 8.0, p.z * 2.0), 4) * 1.2;
     vec3 c = vec3(0.64, 0.86, 0.89);
-    c *= 0.975 + 0.025 * sin(l * 0.33) + 0.012 * sin(l * 1.1 + 1.0);
-    c = mix(c, vec3(0.77, 0.93, 0.94), sstep(-35.0, -75.0, l) * 0.5);
-    c = mix(c, vec3(0.73, 0.91, 0.93), sstep(55.0, 80.0, l) * 0.35);
-    float clouds = sstep(0.55, 0.75, fbm(vec3(p.x * 4.0, p.y * 30.0, p.z * 4.0), 4)) * band(l, 20.0, 45.0, 6.0);
-    col = mix(c, vec3(0.86, 0.97, 0.98), clouds * 0.35);
+    // a few broad, very faint bands
+    c *= 0.985 + 0.018 * sin(l * 0.3) + 0.008 * fbm(vec3(p.x * 2.0, p.y * 20.0, p.z * 2.0), 3);
+    c = mix(c, vec3(0.76, 0.92, 0.93), sstep(-35.0, -75.0, l) * 0.4);
+    c = mix(c, vec3(0.72, 0.9, 0.92), sstep(55.0, 80.0, l) * 0.3);
+    float clouds = sstep(0.6, 0.78, fbm(vec3(p.x * 4.0, p.y * 26.0, p.z * 4.0), 4)) * band(l, 22.0, 42.0, 6.0);
+    col = mix(c, vec3(0.84, 0.96, 0.97), clouds * 0.14);
   }
 `
 
@@ -419,7 +426,7 @@ const pluto = /* glsl */ `
     col *= mix(1.0, 0.95 + 0.05 * cellEdges, sputnik);
 
     float fresh = 0.0;
-    h = (craterField(p, 7.0, 0.4, 41.0, fresh) * 0.3 + craterField(p, 16.0, 0.5, 42.0, fresh) * 0.25) * (1.0 - heart);
+    h = (craterField(p, 7.0, 0.3, 41.0, fresh) * 0.14 + craterField(p, 16.0, 0.4, 42.0, fresh) * 0.12) * (1.0 - heart);
     h += fbm(p * 6.0, 5) * 0.01 * (1.0 - sputnik) - sputnik * 0.008 + cellEdges * 0.002 * sputnik;
   }
 `
@@ -433,7 +440,7 @@ const haumea = /* glsl */ `
     float spot = 1.0 - sstep(0.18, 0.45, angleTo(p, dirFrom(12.0, 60.0)) + 0.06 * fbm(p * 6.0, 3));
     col = mix(ice, vec3(0.64, 0.4, 0.36), spot * 0.8);
     float fresh = 0.0;
-    h = fbm(p * 4.0, 5) * 0.012 + craterField(p, 8.0, 0.4, 51.0, fresh) * 0.2;
+    h = fbm(p * 4.0, 5) * 0.012 + craterField(p, 8.0, 0.3, 51.0, fresh) * 0.12;
   }
 `
 
@@ -444,7 +451,7 @@ const makemake = /* glsl */ `
     col = mix(base, vec3(0.88, 0.78, 0.68), frost * 0.35);
     col *= 1.0 - sstep(0.75, 0.9, ridged(p * 3.0, 4)) * 0.12;
     float fresh = 0.0;
-    h = fbm(p * 5.0, 5) * 0.01 + craterField(p, 10.0, 0.45, 61.0, fresh) * 0.25;
+    h = fbm(p * 5.0, 5) * 0.01 + craterField(p, 10.0, 0.35, 61.0, fresh) * 0.13;
   }
 `
 
@@ -453,7 +460,7 @@ const eris = /* glsl */ `
     col = mix(vec3(0.83, 0.83, 0.85), vec3(0.95, 0.95, 0.95), 0.5 + 0.5 * fbm(p * 3.0, 5));
     col = mix(col, vec3(0.9, 0.86, 0.8), sstep(0.2, 0.5, fbm(p * 2.0 + 4.0, 4)) * 0.45);
     float fresh = 0.0;
-    h = fbm(p * 5.0, 5) * 0.008 + craterField(p, 9.0, 0.4, 71.0, fresh) * 0.2;
+    h = fbm(p * 5.0, 5) * 0.008 + craterField(p, 9.0, 0.3, 71.0, fresh) * 0.12;
   }
 `
 
@@ -474,16 +481,16 @@ const sun = /* glsl */ `
 `
 
 export const RECIPES = {
-  moon: { kind: 'surface', glsl: moon, bump: 3.0 },
-  mercury: { kind: 'surface', glsl: mercury, bump: 3.0 },
+  moon: { kind: 'surface', glsl: moon, bump: 2.0 },
+  mercury: { kind: 'surface', glsl: mercury, bump: 2.4 },
   venus: { kind: 'gas', glsl: venus },
-  mars: { kind: 'surface', glsl: mars, bump: 3.0 },
+  mars: { kind: 'surface', glsl: mars, bump: 1.8 },
   ceres: { kind: 'surface', glsl: ceres, bump: 3.0 },
   jupiter: { kind: 'gas', glsl: jupiter },
   saturn: { kind: 'gas', glsl: saturn },
   uranus: { kind: 'gas', glsl: uranus },
   neptune: { kind: 'gas', glsl: neptune },
-  pluto: { kind: 'surface', glsl: pluto, bump: 3.0 },
+  pluto: { kind: 'surface', glsl: pluto, bump: 2.2 },
   haumea: { kind: 'surface', glsl: haumea, bump: 2.5 },
   makemake: { kind: 'surface', glsl: makemake, bump: 2.5 },
   eris: { kind: 'surface', glsl: eris, bump: 2.5 },

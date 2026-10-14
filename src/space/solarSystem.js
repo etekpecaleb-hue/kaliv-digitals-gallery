@@ -16,12 +16,16 @@
 //   system.ctx                         { years, dtYears, timeScale, spinDt, sunPosition,
 //                                        camera, coarse, reduced, time, dt }
 //   system.setOrbitsVisible(visible)
+//   system.dispose()                   disposes every subsystem, the visuals and the group
 import { Group, Mesh, MeshStandardMaterial, PointLight, AmbientLight, SphereGeometry, Vector3 } from 'three'
 import { SUN, HOME, MOON, WORLDS, SECONDS_PER_YEAR } from '../data/worlds.js'
 import { orbitPosition, rotationSeconds, yearsSinceJ2000 } from './orbits.js'
 
 const TAU = Math.PI * 2
 const DEG = Math.PI / 180
+// Fastest a body may spin, in turns per second of real time, whatever the time
+// scale, so fast rotators never strobe at 10x / 100x.
+const MAX_TURNS_PER_SECOND = 0.2
 
 function makeBody(def, object3D, extra = {}) {
   return {
@@ -148,6 +152,19 @@ export class SolarSystem {
     this.visuals?.setOrbitsVisible?.(visible)
   }
 
+  dispose() {
+    for (const system of this.systems) system.dispose?.()
+    this.systems.length = 0
+    if (this.visuals?.dispose) this.visuals.dispose()
+    else {
+      for (const body of this.bodies) {
+        body.mesh?.geometry.dispose()
+        body.mesh?.material.dispose()
+      }
+    }
+    this.group.removeFromParent()
+  }
+
   update(time, dt) {
     const scale = this.reduced ? Math.min(this.timeScale, 1) : this.timeScale
     const dtYears = (dt * scale) / SECONDS_PER_YEAR
@@ -162,7 +179,11 @@ export class SolarSystem {
     for (const body of this.bodies) {
       const { def } = body
       if (def.orbit && body !== this.home) orbitPosition(def.orbit, this.years, body.object3D.position)
-      if (body.spin && body.spinSeconds) body.spin.rotation.y += (spinDt / body.spinSeconds) * TAU
+      if (body.spin && body.spinSeconds) {
+        const turns = spinDt / body.spinSeconds
+        const cap = dt * MAX_TURNS_PER_SECOND
+        body.spin.rotation.y = (body.spin.rotation.y + Math.max(-cap, Math.min(cap, turns)) * TAU) % TAU
+      }
     }
     // The Moon is tidally locked: keep its spin facing home.
     if (this.moon.spin) this.moon.spin.rotation.y = Math.atan2(this.moon.object3D.position.x, this.moon.object3D.position.z) + Math.PI

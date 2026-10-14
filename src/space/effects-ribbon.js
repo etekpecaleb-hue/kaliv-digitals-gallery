@@ -33,6 +33,7 @@ const RIBBON_VERTEX = /* glsl */ `
   uniform float uWidthHead;
   uniform float uWidthTail;
   uniform float uMinPx;
+  uniform float uMaxPx;
   uniform float uEnergyFloor;
   uniform float uViewHeight;
   attribute vec3 aTangent;
@@ -49,6 +50,8 @@ const RIBBON_VERTEX = /* glsl */ `
     float pixel = -mv.z * 2.0 / (projectionMatrix[1][1] * uViewHeight);
     float shown = max(width, uMinPx * pixel);
     vEnergy = max(width / shown, uEnergyFloor);
+    // hairline trails: fade out where the camera is so close they turn into beams
+    if (uMaxPx > 0.0) vEnergy *= 1.0 - smoothstep(uMaxPx, uMaxPx * 3.0, shown / pixel);
     mv.xyz += side * (aStrip.x * shown * 0.5);
     vStrip = aStrip;
     gl_Position = projectionMatrix * mv;
@@ -70,8 +73,12 @@ const RIBBON_FRAGMENT = /* glsl */ `
     float along = pow(1.0 - vStrip.y, uFade) * smoothstep(0.0, uHeadFade, vStrip.y);
     float streak = 1.0;
     if (uStreaks > 0.0) {
-      float s = sin(vStrip.x * 8.5 + vStrip.y * 5.0 - uTime * 0.6) * sin(vStrip.x * 3.1 - vStrip.y * 2.0 + 1.7);
-      streak = mix(1.0, 0.55 + 0.45 * s * s * 1.6, uStreaks);
+      // filaments run along the ribbon (lines of constant x fan out from the
+      // head as it widens) and shimmer slowly
+      float bendA = 0.5 * sin(vStrip.y * 2.2 - uTime * 0.21);
+      float bendB = 0.35 * sin(vStrip.y * 1.3 + uTime * 0.13 + 2.0);
+      float s = sin(vStrip.x * 10.5 + bendA) * sin(vStrip.x * 4.3 + 1.7 + bendB);
+      streak = mix(1.0, 0.5 + 0.5 * s * s * 1.7, uStreaks);
       across = mix(across, across * across, 0.5);
     }
     float alpha = along * across * streak * uOpacity * vEnergy;
@@ -88,6 +95,7 @@ export function createRibbonMaterial({
   widthHead = 0.1,
   widthTail = 0.02,
   minPx = 1.2,
+  maxPx = 0,
   energyFloor = 0,
   fade = 1.6,
   headFade = 0.0001,
@@ -101,6 +109,7 @@ export function createRibbonMaterial({
       uWidthHead: { value: widthHead },
       uWidthTail: { value: widthTail },
       uMinPx: { value: minPx },
+      uMaxPx: { value: maxPx },
       uEnergyFloor: { value: energyFloor },
       uFade: { value: fade },
       uHeadFade: { value: headFade },
@@ -190,7 +199,11 @@ export class Trail extends Ribbon {
   }
 
   reset(position) {
-    for (let i = 0; i < this.count; i++) this.ring.set([position.x, position.y, position.z], i * 3)
+    for (let i = 0; i < this.count; i++) {
+      this.ring[i * 3] = position.x
+      this.ring[i * 3 + 1] = position.y
+      this.ring[i * 3 + 2] = position.z
+    }
     this.clock = 0
     this.primed = true
   }
@@ -225,6 +238,7 @@ const GLOW_VERTEX = /* glsl */ `
   uniform float uPxScale;
   uniform float uMinPx;
   uniform float uMaxPx;
+  uniform float uLift;
   attribute vec3 aColor;
   attribute float aSize;
   attribute float aIntensity;
@@ -233,6 +247,8 @@ const GLOW_VERTEX = /* glsl */ `
   varying float vAlpha;
   void main() {
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    // pulled towards the camera so a glow is never cut by the body it sits on
+    mv.xyz += normalize(-mv.xyz) * min(uLift, -mv.z * 0.5);
     float px = aSize * uPxScale / max(-mv.z, 1e-3);
     float size = clamp(px, uMinPx, uMaxPx);
     float energy = clamp(px / uMinPx, 0.0, 1.0);
@@ -264,12 +280,13 @@ const GLOW_FRAGMENT = /* glsl */ `
   }
 `
 
-export function createGlowMaterial({ minPx = 2, maxPx = 160 } = {}) {
+export function createGlowMaterial({ minPx = 2, maxPx = 160, lift = 0 } = {}) {
   return new ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
       uMinPx: { value: minPx },
       uMaxPx: { value: maxPx },
+      uLift: { value: lift },
       uPxScale: SCREEN.uPxScale,
     },
     vertexShader: GLOW_VERTEX,
@@ -279,6 +296,8 @@ export function createGlowMaterial({ minPx = 2, maxPx = 160 } = {}) {
     blending: AdditiveBlending,
   })
 }
+
+const STEADY = [0, 0, 1, 1]
 
 // A fixed set of glow points whose positions and intensities are rewritten
 // in place every frame.
@@ -303,7 +322,7 @@ export class GlowPoints {
   }
 
   // blink = [period s (0 = steady), phase 0..1, duty 0..1, off level 0..1]
-  define(i, { color, size, intensity = 1, blink = [0, 0, 1, 1] }) {
+  define(i, { color, size, intensity = 1, blink = STEADY }) {
     const c = new Color(color)
     this.colors.set([c.r, c.g, c.b], i * 3)
     this.sizes[i] = size

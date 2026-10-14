@@ -113,22 +113,25 @@ const smooth = (a, b, x) => {
 function saturnRing(x, noise) {
   const fine = noise(x * 520)
   const mid = noise(x * 110 + 40)
+  const coarse = noise(x * 24 + 90)
+  // radial banding in brightness, so even the opaque B ring reads as ringlets
+  const shade = 0.8 + 0.22 * fine + 0.14 * mid + 0.06 * coarse
   if (x < 1.239) return [0, 0, 0, 0]
   if (x < 1.527) {
     const plateaus = smooth(0.62, 0.7, noise(x * 60 + 7)) * 0.16
-    return [0.5, 0.46, 0.41, 0.07 + 0.08 * mid + plateaus + 0.04 * fine]
+    return [0.5 * shade, 0.46 * shade, 0.41 * shade, 0.07 + 0.08 * mid + plateaus + 0.04 * fine]
   }
   if (x < 1.951) {
     const t = (x - 1.527) / 0.424
     const opacity = 0.5 + 0.42 * smooth(0, 0.3, t) + 0.12 * (fine - 0.5) + 0.06 * (mid - 0.5)
-    return [0.84 + 0.05 * t, 0.76 + 0.06 * t, 0.62 + 0.07 * t, clamp(opacity, 0, 0.97)]
+    return [(0.84 + 0.05 * t) * shade, (0.76 + 0.06 * t) * shade, (0.62 + 0.07 * t) * shade, clamp(opacity, 0, 0.96)]
   }
   if (x < 2.025) return [0.44, 0.41, 0.37, 0.03 + 0.07 * fine * smooth(1.96, 2.0, x)]
   if (x < 2.27) {
     const encke = 1 - smooth(0.0, 0.004, Math.abs(x - 2.214))
     const keeler = 1 - smooth(0.0, 0.0015, Math.abs(x - 2.262))
     const opacity = (0.48 + 0.12 * mid + 0.08 * (fine - 0.5)) * (1 - encke * 0.92) * (1 - keeler * 0.8)
-    return [0.77, 0.73, 0.66, opacity * (1 - smooth(2.255, 2.27, x) * 0.4)]
+    return [0.77 * shade, 0.73 * shade, 0.66 * shade, opacity * (1 - smooth(2.255, 2.27, x) * 0.4)]
   }
   const f = Math.exp(-(((x - 2.281) / 0.0022) ** 2))
   return [0.8, 0.77, 0.72, 0.38 * f]
@@ -149,12 +152,13 @@ const URANUS_RINGLETS = [
   [2.001, 0.013, 0.62],
 ]
 
+// Coal-dark and narrow: they should only just show.
 function uranusRing(x) {
-  let opacity = 0.012
+  let opacity = 0.006
   for (const [radius, width, strength] of URANUS_RINGLETS) {
-    opacity += strength * Math.exp(-(((x - radius) / width) ** 2))
+    opacity += strength * 0.5 * Math.exp(-(((x - radius) / width) ** 2))
   }
-  return [0.5, 0.52, 0.55, clamp(opacity, 0, 0.8)]
+  return [0.34, 0.36, 0.38, clamp(opacity, 0, 0.5)]
 }
 
 // 1D radial profile (sRGB colour + opacity) sampled by the ring shader.
@@ -202,7 +206,12 @@ class PlanetVisuals {
   glintTarget = 1
   sunSurface = null
   viewport = new Vector2()
+  // everything created here, for dispose()
+  objects = []
+  textures = []
   scratch = new Vector3()
+  cameraLocal = new Vector3()
+  zero = new Vector3()
 
   constructor({ renderer, coarse = false, profile = false }) {
     this.renderer = renderer
@@ -210,6 +219,7 @@ class PlanetVisuals {
     this.baker = new TextureBaker(renderer, { coarse, profile })
     this.placeholder = solidTexture(255, 255, 255)
     this.flatNormal = solidTexture(128, 128, 255)
+    this.textures.push(this.placeholder, this.flatNormal)
   }
 
   sphere(widthSegments) {
@@ -260,6 +270,7 @@ class PlanetVisuals {
     if (def.rings) {
       const { inner, outer, style } = def.rings
       profile = ringProfile(style, inner, outer, def.radius)
+      this.textures.push(profile)
       if (style === 'saturn') {
         defines.RING_SHADOW = ''
         uniforms.uRingProfile = { value: profile }
@@ -276,6 +287,7 @@ class PlanetVisuals {
     })
     const mesh = new Mesh(this.sphere(segments), material)
     mesh.name = `${def.id}-surface`
+    this.objects.push(mesh)
     // Haumea spins about its shortest axis, like the real one
     if (def.shape) mesh.scale.set(def.shape[0], def.shape[2], def.shape[1]).multiplyScalar(def.radius)
     else mesh.scale.setScalar(def.radius)
@@ -309,6 +321,7 @@ class PlanetVisuals {
   createSun(def) {
     const surface = createSunSurface(def, { coarse: this.coarse })
     this.sunSurface = surface
+    this.objects.push(surface.mesh)
     this.baker.bake('sun', 'data', {
       priority: () => this.distanceTo(surface.mesh, def.radius) * 0.5,
       onDone: (job) => {
@@ -338,6 +351,7 @@ class PlanetVisuals {
     })
     const shell = new Mesh(this.sphere(this.coarse ? 48 : 64), material)
     shell.name = `${def.id}-atmosphere`
+    this.objects.push(shell)
     shell.scale.setScalar(def.radius * look.shell)
     return shell
   }
@@ -353,7 +367,7 @@ class PlanetVisuals {
         uSunPos: this.lighting.sunPosition,
         uSunColor: this.lighting.sunColor,
         uAmbient: this.lighting.ambient,
-        uBrightness: { value: style === 'saturn' ? 1.05 : 0.9 },
+        uBrightness: { value: style === 'saturn' ? 1.05 : 0.45 },
       },
       vertexShader: RING_VERTEX,
       fragmentShader: RING_FRAGMENT,
@@ -363,6 +377,7 @@ class PlanetVisuals {
     })
     const ring = new Mesh(new RingGeometry(inner * 0.995, outer * 1.005, this.coarse ? 128 : 192, 1), material)
     ring.name = `${def.id}-rings`
+    this.objects.push(ring)
     ring.rotation.x = -Math.PI / 2
     return ring
   }
@@ -384,13 +399,16 @@ class PlanetVisuals {
     const colors = []
     const orbits = []
     const index = []
+    const starts = []
     const point = new Vector3()
     const color = new Color()
+    const white = new Color('#ffffff')
     bodies.forEach((body, slot) => {
       const { orbit } = body.def
+      starts.push(positions.length / 3)
       const segments = clamp(Math.round(orbit.a * 0.5), 192, 768)
       const dwarf = body.kind === 'Dwarf planet'
-      color.set(body.id === 'home' ? '#5f9dff' : body.color).lerp(new Color('#ffffff'), 0.18)
+      color.set(body.id === 'home' ? '#5f9dff' : body.color).lerp(white, 0.18)
       color.multiplyScalar(ORBIT_TINT[body.kind] ?? 0.5)
       const base = positions.length / 3
       // sample evenly in eccentric anomaly so perihelion stays smooth
@@ -401,7 +419,7 @@ class PlanetVisuals {
         orbitPosition(orbit, years, point)
         positions.push(point.x, point.y, point.z)
         colors.push(color.r, color.g, color.b)
-        orbits.push(k / segments, slot, dwarf ? 110 : 0)
+        orbits.push(k / segments, slot, dwarf ? 1 : 0)
         if (k > 0) index.push(base + k - 1, base + k)
       }
     })
@@ -415,6 +433,8 @@ class PlanetVisuals {
       uBodyPhase: { value: new Float32Array(MAX_ORBITS) },
       uBodyRadius: { value: new Float32Array(MAX_ORBITS) },
       uOrbitSize: { value: new Float32Array(MAX_ORBITS).fill(1) },
+      uOwnFade: { value: new Float32Array(MAX_ORBITS).fill(1) },
+      uDashLevel: { value: new Float32Array(MAX_ORBITS).fill(5) },
       uInsideFade: { value: new Vector2(...insideFade) },
       uOpacity: { value: 1 },
     }
@@ -434,7 +454,16 @@ class PlanetVisuals {
     const lines = new LineSegments(geometry, material)
     lines.name = 'orbit-lines'
     parent.add(lines)
-    return { lines, bodies, uniforms }
+    this.objects.push(lines)
+    // every 8th vertex of each orbit, for the camera's distance to the line
+    const probes = bodies.map((body, slot) => {
+      const first = starts[slot]
+      const last = slot + 1 < bodies.length ? starts[slot + 1] : positions.length / 3
+      const picked = []
+      for (let k = first; k < last; k += 8) picked.push(positions[k * 3], positions[k * 3 + 1], positions[k * 3 + 2])
+      return Float32Array.from(picked)
+    })
+    return { lines, bodies, uniforms, probes }
   }
 
   createGlints(system) {
@@ -469,6 +498,7 @@ class PlanetVisuals {
     })
     this.glints = new Points(geometry, material)
     this.glints.name = 'planet-glints'
+    this.objects.push(this.glints)
     this.glints.frustumCulled = false
     this.glintBodies = bodies
     system.group.add(this.glints)
@@ -509,16 +539,32 @@ class PlanetVisuals {
   updateOrbits(ctx, dt) {
     this.orbitOpacity = damp(this.orbitOpacity, this.orbitTarget, 6, dt)
     const frame = this.system.frame
-    for (const { lines, bodies, uniforms } of this.orbitLines) {
+    const camera = this.cameraPosition
+    this.renderer.getDrawingBufferSize(this.viewport)
+    // device pixels per world unit at a distance of one unit, and the wanted
+    // dash period on screen
+    const pxScale = (this.viewport.y * ctx.camera.projectionMatrix.elements[5]) / 2
+    const dashPeriod = 26 * this.renderer.getPixelRatio()
+    for (const orbit of this.orbitLines) {
+      const { lines, bodies, uniforms, probes } = orbit
       lines.visible = this.orbitOpacity > 0.01
       if (!lines.visible) continue
       uniforms.uOpacity.value = this.orbitOpacity
+      const parent = lines.parent
+      const local = this.cameraLocal.copy(camera).sub(parent === frame ? frame.position : this.zero)
       for (let slot = 0; slot < bodies.length; slot++) {
         const body = bodies[slot]
         const position = uniforms.uBodyPos.value[slot]
         if (body.id === 'home') position.copy(frame.position).negate()
         else position.copy(body.object3D.position)
         uniforms.uBodyPhase.value[slot] = orbitPhase(body.def.orbit, ctx.years)
+        const a = body.def.orbit.a
+        uniforms.uOwnFade.value[slot] = smooth(a * 0.35, a * 1.2, local.distanceTo(position))
+        if (body.kind === 'Dwarf planet') {
+          const nearest = Math.max(nearestDistance(probes[slot], local), body.radius * 4)
+          const count = (TAU * a * pxScale) / (nearest * dashPeriod)
+          uniforms.uDashLevel.value[slot] = clamp(Math.log2(count), 5, 15)
+        }
       }
     }
   }
@@ -545,10 +591,41 @@ class PlanetVisuals {
     this.glintPositions.needsUpdate = true
   }
 
+  // Frees every geometry, material and texture created here (and the bakes).
+  dispose() {
+    const geometries = new Set()
+    for (const object of this.objects) {
+      object.removeFromParent()
+      geometries.add(object.geometry)
+      object.material.dispose()
+    }
+    for (const geometry of geometries) geometry.dispose()
+    for (const geometry of this.geometries.values()) geometry.dispose()
+    for (const texture of this.textures) texture.dispose()
+    this.objects.length = 0
+    this.textures.length = 0
+    this.geometries.clear()
+    this.fades.length = 0
+    this.orbitLines.length = 0
+    this.baker.dispose()
+  }
+
   // Bake timings, texture sizes and the queue length, for QA.
   stats() {
     return { pending: this.baker.pending, bakes: this.baker.stats }
   }
+}
+
+// Distance from `point` to the nearest of a flat list of xyz positions.
+function nearestDistance(xyz, point) {
+  let best = Infinity
+  for (let i = 0; i < xyz.length; i += 3) {
+    const dx = xyz[i] - point.x
+    const dy = xyz[i + 1] - point.y
+    const dz = xyz[i + 2] - point.z
+    best = Math.min(best, dx * dx + dy * dy + dz * dz)
+  }
+  return Math.sqrt(best)
 }
 
 // Small worlds get a generous target so they can still be tapped.

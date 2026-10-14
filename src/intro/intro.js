@@ -1,6 +1,6 @@
 // The FUI intro: beam, grid, corner brackets, scrambled meta text, clock,
-// spinning reticle with the emblem drawing itself, the particle wordmark,
-// a boot log with live values, and the warp-streak exit into the gallery.
+// spinning reticle with the KD emblem drawing itself, the two-line particle
+// wordmark, a boot log with live values, and the warp-streak exit into the gallery.
 import { gsap } from 'gsap'
 import { FONT_DISPLAY } from '../core/fonts.js'
 import { WordParticles } from './wordParticles.js'
@@ -12,6 +12,10 @@ const byId = (id) => document.getElementById(id)
 const HOLD_AT = 4.1
 // Give up waiting for assets after this long (ms) and enter anyway.
 const READY_TIMEOUT = 9000
+// The particle wordmark: title and the tracked line beneath it.
+const WORDMARK = ['KALIV', 'DIGITALS']
+// Seconds between boot log rows.
+const LOG_STAGGER = 0.28
 
 export class Intro {
   active = true
@@ -34,10 +38,10 @@ export class Intro {
   stopResize = null
 
   // options: { stage, space, reduced, fonts, textures, photosLoaded(),
-  //   photoCount, facts: { gpu, panels, rows, stars }, handOver() -> timeline }
+  //   photoCount, facts: { gpu, panels, rows, stars, worlds }, handOver() -> timeline }
   constructor(options) {
     this.options = options
-    this.word = new WordParticles(options.stage, 'CACHICLOUD', FONT_DISPLAY)
+    this.word = new WordParticles(options.stage, WORDMARK, FONT_DISPLAY)
     this.warp = new Warp(byId('intro-warp'), options.stage.coarse ? 140 : 220)
     this.finished = new Promise((resolve) => (this.resolveFinished = resolve))
   }
@@ -115,7 +119,7 @@ export class Intro {
       .fromTo(
         '#emblem .emblem__stroke',
         { drawSVG: '0%' },
-        { drawSVG: '100%', duration: 1.1, stagger: 0.16, ease: 'power2.inOut' },
+        { drawSVG: '100%', duration: 1.1, stagger: 0.12, ease: 'power2.inOut' },
         1.5,
       )
       .fromTo('#emblem', { scale: 1.14, svgOrigin: '0 0' }, { scale: 1, duration: 1.6, ease: 'expo.out' }, 1.5)
@@ -125,7 +129,7 @@ export class Intro {
       gsap.to('#reticle .reticle__spin-b', { rotation: -360, svgOrigin: '0 0', duration: 26, repeat: -1, ease: 'none' }),
       gsap.to('#reticle .reticle__spin-c', { rotation: 360, svgOrigin: '0 0', duration: 5.5, repeat: -1, ease: 'none' }),
     ]
-    this.logLines().forEach((line, i) => tl.call(() => this.addLog(line), [], 1 + i * 0.32))
+    this.logLines().forEach((line, i) => tl.call(() => this.addLog(line), [], 1 + i * LOG_STAGGER))
 
     // The wordmark is laid out with the display font, so wait for it.
     tl.addPause(0.95, () => {
@@ -144,7 +148,7 @@ export class Intro {
         {
           duration: 1.2,
           scrambleText: {
-            text: `Photo gallery · ${this.options.photoCount} frames`,
+            text: this.subText(),
             chars: '01<>/#',
             speed: 0.45,
           },
@@ -162,7 +166,7 @@ export class Intro {
     space.uniforms.uOpacity.value = 1
     gsap.set('.intro__grid', { opacity: 1 })
     gsap.set('.intro__beam', { opacity: 0 })
-    byId('intro-sub').textContent = `Photo gallery · ${this.options.photoCount} frames`
+    byId('intro-sub').textContent = this.subText()
     this.logLines().forEach((line) => this.addLog(line, false))
     await this.options.fonts
     this.layoutWord()
@@ -172,13 +176,21 @@ export class Intro {
     this.exit(false)
   }
 
-  // Sizes the wordmark to the #intro-word box and (re)builds it there.
+  subText() {
+    const { photoCount, facts } = this.options
+    return `Space gallery · ${photoCount} frames · ${facts.worlds} worlds`
+  }
+
+  // Sizes the wordmark to the #intro-word box and (re)builds it there. The
+  // title is capped by the viewport height so both lines, the reticle and the
+  // log keep clear of each other; the box is resized to the ink height.
   layoutWord() {
     const host = byId('intro-word')
-    const maxWidth = Math.min(host.clientWidth, 1240) * 0.94
-    const maxSize = Math.min(this.options.stage.coarse ? 96 : 132, window.innerHeight * 0.16)
+    const maxWidth = Math.min(host.clientWidth, 1240) * (this.options.stage.coarse ? 0.88 : 0.94)
+    const maxSize = Math.min(this.options.stage.coarse ? 96 : 150, window.innerHeight * 0.14)
     const fontSize = this.word.fitFontSize(maxWidth, maxSize)
-    this.el.style.setProperty('--word-h', `${Math.round(fontSize * 1.3)}px`)
+    const { height } = this.word.measure(fontSize)
+    this.el.style.setProperty('--word-h', `${Math.round(height + fontSize * 0.36)}px`)
     const rect = host.getBoundingClientRect()
     this.word.build({
       x: rect.left + rect.width / 2,
@@ -246,6 +258,7 @@ export class Intro {
       },
       { label: 'Frames', value: () => `${pad(this.options.photosLoaded())}/${pad(photoCount)}` },
       { label: 'Globe', value: () => `${facts.panels} panels · ${facts.rows} rows` },
+      { label: 'Worlds', value: () => `${facts.worlds} + sun + moon` },
       { label: 'Starfield', value: () => `${facts.stars} stars` },
       { label: 'Status', value: () => (this.ready ? 'ready' : 'loading') },
     ]

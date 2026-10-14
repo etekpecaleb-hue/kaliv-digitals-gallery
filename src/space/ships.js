@@ -46,9 +46,14 @@ class Craft {
   }
 }
 
+// How each craft turns: nose response rate, bank per unit of yaw rate, bank limit.
+const SHUTTLE_STEERING = { rate: 50, bankGain: 0, maxBank: 0 }
+const COURIER_STEERING = { rate: 4, bankGain: 0.8, maxBank: 0.7 }
+const CRUISER_STEERING = { rate: 2.5, bankGain: 2.5, maxBank: 0.5 }
+
 // Steers a craft's nose along `tangent`, banking into turns.
 const turnAxis = new Vector3()
-function steer(craft, tangent, up, dt, { rate = 5, bankGain = 0.9, maxBank = 0.6 } = {}) {
+function steer(craft, tangent, up, dt, { rate, bankGain, maxBank }) {
   const previous = turnAxis.copy(craft.forward)
   craft.forward.lerp(tangent, 1 - Math.exp(-rate * dt)).normalize()
   const yaw = dt > 0 ? previous.cross(craft.forward).dot(up) / dt : 0
@@ -97,6 +102,7 @@ export class Ships {
       widthHead: 0.018,
       widthTail: 0.007,
       minPx: 1.1,
+      maxPx: 3,
       fade: 1.2,
       headFade: 0.12,
     })
@@ -120,7 +126,7 @@ export class Ships {
     const position = this.shuttleAt(time, craft.object3D.position)
     this.shuttleAt(time + 0.05, this.tangent).sub(position).normalize()
     const up = this.tmp.copy(position).normalize()
-    steer(craft, this.tangent, up, dt || 1, { rate: 50, bankGain: 0 })
+    steer(craft, this.tangent, up, dt || 1, SHUTTLE_STEERING)
     craft.throttle = 0.8
     this.trailFrom(craft, craft.trail, dt)
   }
@@ -168,6 +174,7 @@ export class Ships {
       widthHead: 0.02,
       widthTail: 0.007,
       minPx: 1.1,
+      maxPx: 3,
       fade: 1.2,
       headFade: 0.16,
     })
@@ -193,11 +200,12 @@ export class Ships {
     y.addScaledVector(x, -y.dot(x)).normalize()
     const z = this.tangent.crossVectors(x, y)
     this.courierFrame.quaternion.setFromRotationMatrix(this.basis.makeBasis(x, y, z))
-    this.courierShape.forEach(([anchor, px, py, pz], i) => {
-      this.courierPoints[i].set(anchor * distance + px, py, pz)
-    })
+    for (let i = 0; i < this.courierShape.length; i++) {
+      const shape = this.courierShape[i]
+      this.courierPoints[i].set(shape[0] * distance + shape[1], shape[2], shape[3])
+    }
     this.courierPath.rebuild()
-    this.moveAlong(this.courier, this.courierPath, 60, dt, UP, { rate: 4, bankGain: 0.8, maxBank: 0.7 })
+    this.moveAlong(this.courier, this.courierPath, 60, dt, UP, COURIER_STEERING)
     this.trailFrom(this.courier, this.courier.trail, dt)
   }
 
@@ -235,6 +243,7 @@ export class Ships {
       widthHead: 0.16,
       widthTail: 0.05,
       minPx: 1.3,
+      maxPx: 6,
       energyFloor: 0.35,
       fade: 1.2,
       headFade: 0.1,
@@ -251,7 +260,8 @@ export class Ships {
     const { route, routeAt, routeClearance, cruiserPoints } = this
     const n = route.length
     for (let i = 0; i < n; i++) bodyPosition(route[i], this.system.group, routeAt[i])
-    const [into, out] = this.legDir
+    const into = this.legDir[0]
+    const out = this.legDir[1]
     const { u, w, n: normal } = this.swing
     for (let i = 0; i < n; i++) {
       const a = routeAt[(i - 1 + n) % n]
@@ -284,7 +294,7 @@ export class Ships {
   updateCruiser(dt) {
     this.layCruiserRoute()
     this.cruiserPath.rebuild()
-    this.moveAlong(this.cruiser, this.cruiserPath, 360, dt, UP, { rate: 2.5, bankGain: 2.5, maxBank: 0.5 })
+    this.moveAlong(this.cruiser, this.cruiserPath, 360, dt, UP, CRUISER_STEERING)
     this.trailFrom(this.cruiser, this.cruiser.trail, dt)
   }
 

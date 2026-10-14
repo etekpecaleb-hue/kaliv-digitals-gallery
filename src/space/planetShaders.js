@@ -202,9 +202,13 @@ export const RING_FRAGMENT = /* glsl */ `
 `
 
 // aOrbit: x = phase along the orbit (0..1, eccentric anomaly), y = body slot,
-// z = dash count (0 = solid). Lines fade near their body, near the camera,
-// with distance and while the camera sits deep inside the orbit (so they don't
-// wrap the whole sky), and brighten into a trail behind the body.
+// z = 1 for a dashed line (dwarf planets). Lines fade near their body, near the
+// camera, with distance and while the camera sits deep inside the orbit (so
+// they don't wrap the whole sky); a body's own orbit fades out as the camera
+// closes in on it (uOwnFade, seen edge-on it would slice straight through the
+// body), and the line brightens into a trail behind the body. Dashes come in
+// power-of-two counts per orbit (uDashLevel = log2(count)), crossfaded, so
+// they keep roughly the same length on screen at any zoom.
 export const ORBIT_VERTEX = /* glsl */ `
   #define MAX_ORBITS 16
   attribute vec3 aColor;
@@ -213,10 +217,12 @@ export const ORBIT_VERTEX = /* glsl */ `
   uniform float uBodyPhase[MAX_ORBITS];
   uniform float uBodyRadius[MAX_ORBITS];
   uniform float uOrbitSize[MAX_ORBITS];
+  uniform float uOwnFade[MAX_ORBITS];
+  uniform float uDashLevel[MAX_ORBITS];
   uniform vec2 uInsideFade;
   uniform float uOpacity;
   varying vec4 vColor;
-  varying float vDash;
+  varying vec3 vDash;
   ${SSTEP}
 
   void main() {
@@ -229,18 +235,23 @@ export const ORBIT_VERTEX = /* glsl */ `
     float far = 1.0 / (1.0 + camDist * camDist / 3.6e7);
     float inside = sstep(uInsideFade.x, uInsideFade.y, distance(cameraPosition, modelMatrix[3].xyz) / uOrbitSize[slot]);
     float trail = exp(-fract(uBodyPhase[slot] - aOrbit.x) * 9.0);
-    vColor = vec4(aColor, (0.32 + 0.68 * trail) * nearBody * nearCam * far * inside * uOpacity);
-    vDash = aOrbit.z > 0.0 ? aOrbit.x * aOrbit.z : -1.0;
+    float alpha = (0.32 + 0.68 * trail) * nearBody * nearCam * far * inside * uOwnFade[slot] * uOpacity;
+    vColor = vec4(aColor, alpha);
+    float level = uDashLevel[slot];
+    float count = exp2(floor(level));
+    vDash = aOrbit.z > 0.0 ? vec3(aOrbit.x * count, aOrbit.x * count * 2.0, fract(level)) : vec3(-1.0);
     gl_Position = projectionMatrix * viewMatrix * world;
   }
 `
 
 export const ORBIT_FRAGMENT = /* glsl */ `
   varying vec4 vColor;
-  varying float vDash;
+  varying vec3 vDash;
   void main() {
-    if (vDash >= 0.0 && fract(vDash) > 0.55) discard;
-    gl_FragColor = vec4(vColor.rgb * vColor.a, 1.0);
+    float on = 1.0;
+    if (vDash.x >= 0.0) on = mix(step(fract(vDash.x), 0.55), step(fract(vDash.y), 0.55), vDash.z);
+    if (on * vColor.a < 0.002) discard;
+    gl_FragColor = vec4(vColor.rgb * vColor.a * on, 1.0);
     #include <colorspace_fragment>
   }
 `

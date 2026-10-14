@@ -134,6 +134,8 @@ function boot() {
       panels: globe.panels.length,
       rows: globe.layout.rows.length,
       stars: space.starCount,
+      // the solar system around the gallery: planets and dwarf planets
+      worlds: 12,
     },
     handOver,
   })
