@@ -68,7 +68,7 @@ function boot() {
   }
 
   const space = new Starfield(stage)
-  const store = new PhotoStore(photos, stage.renderer)
+  const store = new PhotoStore(photos, stage.renderer, { coarse: stage.coarse })
   let photosLoaded = 0
   const textures = store.loadTextures((loaded) => (photosLoaded = loaded))
   // The panel the lightbox is showing, so it can fly back to that exact panel.
@@ -210,7 +210,8 @@ function boot() {
       return
     }
     photosPanel.close()
-    const messages = [`Showing your ${plural(added.length, 'photo')}. They stay on this device and are never uploaded.`]
+    const stays = added.length === 1 ? 'It stays on this device and is never uploaded.' : 'They stay on this device and are never uploaded.'
+    const messages = [`Showing your ${plural(added.length, 'photo')}. ${stays}`]
     if (ignored > 0) messages.push(`Only the first ${MAX_FILES} images were used.`)
     if (skipped.length > 0) {
       const what = skipped.length === 1 ? skipped[0] : plural(skipped.length, 'file')

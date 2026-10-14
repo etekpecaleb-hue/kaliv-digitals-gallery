@@ -189,12 +189,20 @@ export class PhotoStore extends EventTarget {
     const added = []
     const urls = []
     try {
-      for (const [i, file] of chosen.entries()) {
-        const photo = await this.readFile(file, `mine-${batch}-${i}`, edge, urls)
-        if (photo) added.push(photo)
-        else skipped.push(file.name)
-        onProgress?.(i + 1, chosen.length)
+      // a few files at a time: decoding runs off the main thread, so this
+      // overlaps it with the canvas work, without holding every image at once
+      const read = new Array(chosen.length)
+      let next = 0
+      let done = 0
+      const worker = async () => {
+        while (next < chosen.length) {
+          const i = next++
+          read[i] = await this.readFile(chosen[i], `mine-${batch}-${i}`, edge, urls)
+          onProgress?.(++done, chosen.length)
+        }
       }
+      await Promise.all(Array.from({ length: Math.min(this.coarse ? 3 : 4, chosen.length) }, worker))
+      chosen.forEach((file, i) => (read[i] ? added.push(read[i]) : skipped.push(file.name)))
       if (added.length === 0) return { added, skipped, ignored }
       const previous = this.photos
       const previousUrls = this.urls

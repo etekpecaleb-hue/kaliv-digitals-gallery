@@ -695,6 +695,7 @@ a {
   left: 50%;
   bottom: calc(var(--safe-b) + 72px);
   z-index: 45;
+  width: max-content;
   max-width: calc(100% - 2 * var(--gutter));
   border: 1px solid var(--line-strong);
   background: var(--glass);
