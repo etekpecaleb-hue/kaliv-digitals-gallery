@@ -90,6 +90,7 @@ let focus = system.bodyById(params.get('focus') ?? 'home') ?? system.home
 const lastFocus = new THREE.Vector3()
 function focusOn(body, distance, azDeg = Number(params.get('az') ?? 30), elDeg = Number(params.get('el') ?? 14)) {
   focus = body
+  system.focus = body
   system.worldPosition(body, lastFocus)
   const d = distance ?? body.radius * 3.2 + 8
   const az = azDeg * (Math.PI / 180)

@@ -17,6 +17,8 @@
 //   system.ctx                         { years, dtYears, timeScale, spinDt, sunPosition,
 //                                        camera, coarse, reduced, time, dt }
 //   system.setOrbitsVisible(visible)
+//   system.focus                       what the camera follows (a body or ship, set by
+//                                      the camera controller); space dust rests in its frame
 //   system.dispose()                   disposes every subsystem, the visuals and the group
 import { Group, Mesh, MeshStandardMaterial, PointLight, AmbientLight, SphereGeometry, Vector3 } from 'three'
 import { SUN, HOME, MOON, WORLDS, SECONDS_PER_YEAR } from '../data/worlds.js'
@@ -68,6 +70,7 @@ export class SolarSystem {
   systems = []
   sunPosition = new Vector3()
   timeScale = 1
+  focus = null
   years
   ctx
 

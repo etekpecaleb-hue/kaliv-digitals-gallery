@@ -337,6 +337,7 @@ export class SpaceEffects {
     this.dust.name = 'space-dust'
     this.group.add(this.dust)
     this.cameraVelocity = new Vector3()
+    this.velocity = new Vector3()
     this.lastCamera = null
     this.cameraSpeed = 0
     this.reference = { body: null, position: new Vector3(), last: new Vector3() }
@@ -456,23 +457,28 @@ export class SpaceEffects {
     coma.commit()
   }
 
-  // Dust rests in the frame of the body the camera is near (the one it is
-  // probably following), so it only streaks when the camera really flies.
+  // Dust rests in the frame of what the camera follows (system.focus, set by
+  // the camera controller), or else of the body it is nearest to, so it only
+  // streaks when the camera really flies, not while it rides along an orbit.
   updateReference(camera) {
     const { system } = this
     const ref = this.reference
-    let best = system.sun
-    let bestScore = Infinity
-    for (const body of system.bodies) {
-      const d = bodyPosition(body, system.group, this.tmp2).distanceTo(camera) - body.radius
-      const score = d / Math.max(body.radius, 1.5)
-      if (score < bestScore) {
-        bestScore = score
-        best = body
+    let best = system.focus?.object3D ? system.focus : null
+    if (best) {
+      best.object3D.getWorldPosition(ref.position)
+    } else {
+      best = system.sun
+      let bestScore = Infinity
+      for (const body of system.bodies) {
+        const d = bodyPosition(body, system.group, this.tmp2).distanceTo(camera) - body.radius
+        const score = d / (body.radius + 8)
+        if (score < bestScore) {
+          bestScore = score
+          best = body
+        }
       }
+      bodyPosition(best, system.group, ref.position)
     }
-    if (bestScore > 40) best = system.sun
-    bodyPosition(best, system.group, ref.position)
     if (best !== ref.body) {
       ref.body = best
       ref.last.copy(ref.position)
@@ -490,10 +496,12 @@ export class SpaceEffects {
     const wrap = DUST_LAYERS[DUST_LAYERS.length - 1].box
     origin.set(origin.x % wrap, origin.y % wrap, origin.z % wrap)
     if (this.lastCamera && dt > 0) {
-      // Camera motion relative to that body; a jump (focus change) is not flight.
-      const velocity = this.tmp2.subVectors(position, this.lastCamera).sub(moved).divideScalar(dt)
-      if (velocity.length() > 60000) velocity.set(0, 0, 0)
-      this.cameraVelocity.lerp(velocity, 1 - Math.exp(-10 * dt))
+      // Camera motion relative to that body. A jump of more than half the
+      // distance to it in one frame is a teleport (a cut), not flight.
+      const step = this.velocity.subVectors(position, this.lastCamera).sub(moved)
+      const range = Math.max(200, 0.5 * position.distanceTo(ref.position))
+      if (step.length() > range) this.cameraVelocity.set(0, 0, 0)
+      else this.cameraVelocity.lerp(step.divideScalar(dt), 1 - Math.exp(-10 * dt))
     }
     this.lastCamera = (this.lastCamera ?? new Vector3()).copy(position)
     const speed = this.cameraVelocity.length()

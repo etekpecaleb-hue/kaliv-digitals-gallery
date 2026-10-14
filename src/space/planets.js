@@ -4,9 +4,11 @@
 //
 //   const visuals = await createPlanetVisuals({ renderer, scene, coarse })
 //   const system = new SolarSystem({ ..., visuals })
+//   visuals.createBody(def) → { mesh, extras }   called by SolarSystem.addBody
+//   visuals.update(time, dt, ctx, system)        called by SolarSystem.update
 //   visuals.baker          shared TextureBaker (sky.js queues on it too)
 //   visuals.lighting       { sunPosition, sunColor, ambient } shared uniforms
-//   visuals.setOrbitsVisible(bool), visuals.setGlintsVisible(bool)
+//   visuals.setOrbitsVisible(bool), visuals.setGlintsVisible(bool), visuals.dispose()
 import {
   AdditiveBlending,
   BackSide,
