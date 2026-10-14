@@ -3,47 +3,55 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>CachiCloud C3</title>
-    <meta name="description" content="CachiCloud C3 gallery showcase: an interactive 3D photo globe and stream." />
+    <title>Kaliv Digitals · Space Gallery</title>
+    <meta name="description" content="Kaliv Digitals space gallery: an interactive 3D photo globe in an explorable solar system." />
     <meta name="theme-color" content="#04060d" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-60 -60 120 120'%3E%3Ccircle r='60' fill='%2304060d'/%3E%3Cpath d='M4.57 -22.29A30 30 0 1 0 4.57 22.29' fill='none' stroke='%23e8efff' stroke-width='10'/%3E%3Cpath d='M16.91 -21.34A15 15 0 1 1 27.9 -0.23M27.9 0.23A15 15 0 1 1 16.91 21.34' fill='none' stroke='%239cc7ff' stroke-width='10'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./assets/index-DznvpmUj.css" />
-    <script type="module" src="./assets/index-eUbDrL-0.js"></script>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-60 -60 120 120'%3E%3Ccircle r='60' fill='%2304060d'/%3E%3Cg fill='none' stroke-width='12'%3E%3Cpath d='M-38.7 -30.8V30.8M-38.7 5.5L-9 -26.7M-25.3 -9L-7.9 28.3' stroke='%23e8efff'/%3E%3Cpath d='M12.8 -30.8V30.8M12.8 -24.8H16.1A24.8 24.8 0 0 1 16.1 24.8H12.8' stroke='%239cc7ff'/%3E%3C/g%3E%3C/svg%3E" />
+    <script type="module" crossorigin src="./assets/index-BzgFGT1G.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CUfbm11x.css">
   </head>
   <body>
-<h1 class="sr-only">CachiCloud C3 photo gallery</h1>
+<h1 class="sr-only">Kaliv Digitals · Space Gallery</h1>
 
     <canvas class="scene" id="scene" tabindex="0" role="img" aria-label="Photo globe. Drag or use the arrow keys to rotate, scroll or pinch to zoom, press Enter to open the photo in view."></canvas>
 
     <!-- Gallery heads-up display -->
     <header class="hud hud-top" id="hud-top">
-      <a class="brand" href="#globe" id="brand" aria-label="CachiCloud C3, back to the globe">
+      <a class="brand" href="#globe" id="brand" aria-label="Kaliv Digitals, back to the globe">
         <svg class="brand__mark" viewBox="-60 -60 120 120" aria-hidden="true">
           <circle r="52" class="brand__ring" />
-          <path d="M4.57 -22.29A30 30 0 1 0 4.57 22.29" class="brand__c" />
-          <path d="M16.91 -21.34A15 15 0 1 1 27.9 -0.23" class="brand__3" />
-          <path d="M27.9 0.23A15 15 0 1 1 16.91 21.34" class="brand__3" />
+          <path d="M-35 -28V28" class="brand__k" />
+          <path d="M-35 5L-8 -24.6" class="brand__k" />
+          <path d="M-22.9 -8.3L-7 25.9" class="brand__k" />
+          <path d="M11 -28V28" class="brand__d" />
+          <path d="M11 -23H14A23 23 0 0 1 14 23H11" class="brand__d" />
         </svg>
-        <span class="brand__word">CachiCloud</span>
-        <span class="brand__tag mono">C3</span>
+        <span class="brand__word">Kaliv</span>
+        <span class="brand__tag mono">Digitals</span>
       </a>
-      <div class="hud-top__actions">
-        <div class="modes" role="group" aria-label="Gallery view">
-          <button class="mode" type="button" id="mode-globe" aria-pressed="true" aria-label="Globe view" title="Globe view (G)">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" /><ellipse cx="8" cy="8" rx="2.6" ry="6.2" /><path d="M1.8 8h12.4" /></svg>
-            <span>Globe</span>
-          </button>
-          <button class="mode" type="button" id="mode-stream" aria-pressed="false" aria-label="Stream view" title="Stream view (S)">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="5.5" height="7" /><rect x="9" y="1.5" width="5.5" height="4" /><rect x="1.5" y="10.5" width="5.5" height="4" /><rect x="9" y="7.5" width="5.5" height="7" /></svg>
-            <span>Stream</span>
-          </button>
-        </div>
-        <button class="add" type="button" id="add-photos" aria-label="Add photos" title="Add photos from your device">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" /></svg>
-          <span>Add photos</span>
+      <!-- One group of square 44 px icon buttons (labels on wide screens) -->
+      <nav class="hud-actions" id="hud-actions" aria-label="Gallery">
+        <button class="hud-btn" type="button" id="btn-blueprint" aria-pressed="true" aria-label="Blueprint" data-tip="Blueprint · B">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.2" />
+            <ellipse cx="8" cy="8" rx="2.6" ry="6.2" />
+            <path d="M1.8 8h12.4M2.9 4.6h10.2M2.9 11.4h10.2" />
+          </svg>
+          <span class="hud-btn__label">Blueprint</span>
         </button>
-        <input class="sr-only" type="file" id="file-input" accept="image/*" multiple tabindex="-1" aria-hidden="true" />
-      </div>
+        <button class="hud-btn" type="button" id="btn-photos" aria-label="Photos" aria-haspopup="dialog" aria-expanded="false" aria-controls="photos-sheet" data-tip="Photos · P">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="2" y="2" width="5" height="5" /><rect x="9" y="2" width="5" height="5" />
+            <rect x="2" y="9" width="5" height="5" /><rect x="9" y="9" width="5" height="5" />
+          </svg>
+          <span class="hud-btn__label">Photos</span>
+        </button>
+        <!-- INSERTION POINT (navigation phase): append the [Worlds] and [Fly]
+             .hud-btn buttons, in that order, into #hud-actions-more. It is
+             display: contents, so they join this row and its 8 px gap. -->
+        <div class="hud-actions__more" id="hud-actions-more"></div>
+      </nav>
+      <input class="sr-only" type="file" id="file-input" accept="image/*,.heic,.heif,.avif" multiple tabindex="-1" aria-hidden="true" />
     </header>
 
     <div class="hud hud-frame" aria-hidden="true">
@@ -59,7 +67,7 @@
         <div class="readout__item readout__item--wide"><dt id="ro-c-label">In view</dt><dd id="ro-c">—</dd></div>
         <div class="readout__item readout__item--fps"><dt>FPS</dt><dd id="ro-fps">60</dd></div>
       </dl>
-      <p class="hint mono" id="hint">Drag to rotate · Scroll to zoom · Select a photo to open it</p>
+      <p class="hint mono" id="hint">Drag to rotate · Scroll to zoom · B blueprint · P photos</p>
     </footer>
 
     <!-- Target brackets that lock onto the hovered globe panel -->
@@ -68,11 +76,6 @@
       <span class="target__c target__c--bl"></span><span class="target__c target__c--br"></span>
       <span class="target__label mono" id="target-label"></span>
     </div>
-
-    <!-- Infinite scroll stream -->
-    <section class="stream" id="stream" aria-label="Photo stream. Scroll, drag or use the arrow keys to move through the photos." hidden>
-      <div class="stream__track" id="stream-track"></div>
-    </section>
 
     <!-- Lightbox -->
     <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-labelledby="lb-title" hidden>
@@ -83,6 +86,7 @@
         <span class="corner corner--tl"></span><span class="corner corner--tr"></span>
         <span class="corner corner--bl"></span><span class="corner corner--br"></span>
         <span class="lightbox__scan" id="lb-scan"></span>
+        <span class="lightbox__progress" id="lb-progress" aria-hidden="true"><i></i></span>
       </div>
       <aside class="lightbox__meta" id="lb-meta">
         <p class="lightbox__index mono"><span id="lb-index">Frame 01 / 32</span><span class="chip" id="lb-category">Orbit</span></p>
@@ -103,7 +107,11 @@
           <button class="lb-btn" type="button" id="lb-next" aria-label="Next photo">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5L11.5 8 6 13.5" /></svg>
           </button>
-          <p class="lightbox__keys mono">← → browse · Esc close</p>
+          <button class="lb-btn lb-btn--play" type="button" id="lb-play" aria-pressed="false" aria-label="Play slideshow">
+            <svg class="lb-play__play" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3l8 5-8 5z" /></svg>
+            <svg class="lb-play__pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3v10M10.5 3v10" /></svg>
+          </button>
+          <p class="lightbox__keys mono">← → browse · Space play · Esc close</p>
         </div>
       </aside>
       <button class="lb-btn lb-btn--close" type="button" id="lb-close" aria-label="Close photo">
@@ -112,14 +120,14 @@
     </div>
 
     <div class="drop" id="drop" hidden>
-      <div class="drop__box"><p class="drop__title">Drop photos to add them</p><p class="drop__note mono">JPG · PNG · WebP · stays in this tab</p></div>
+      <div class="drop__box"><p class="drop__title">Drop photos to replace the gallery</p><p class="drop__note mono">JPG · PNG · WebP · stays on this device</p></div>
     </div>
     <div class="toast mono" id="toast" role="status" aria-live="polite"></div>
 
-    <noscript><p class="noscript">CachiCloud C3 needs JavaScript to show the gallery.</p></noscript>
+    <noscript><p class="noscript">The Kaliv Digitals space gallery needs JavaScript to show the photos.</p></noscript>
 
     <!-- FUI intro -->
-    <div class="intro" id="intro" aria-label="Loading CachiCloud C3">
+    <div class="intro" id="intro" aria-label="Loading Kaliv Digitals">
       <div class="intro__grid" aria-hidden="true"></div>
       <div class="intro__beam" aria-hidden="true"></div>
       <canvas class="intro__warp" id="intro-warp" aria-hidden="true"></canvas>
@@ -130,8 +138,8 @@
       <svg class="intro__corner intro__corner--br" viewBox="0 0 48 48" aria-hidden="true"><path d="M1 47V1h46" /></svg>
 
       <div class="intro__meta intro__meta--tl mono" aria-hidden="true">
-        <span data-scramble>CachiCloud // C3</span>
-        <span data-scramble class="dim">Gallery system v1.0</span>
+        <span data-scramble>Kaliv // Digitals</span>
+        <span data-scramble class="dim">Space gallery system v2.0</span>
       </div>
       <div class="intro__meta intro__meta--tr mono" aria-hidden="true">
         <span id="intro-clock">00:00:00</span>
@@ -157,9 +165,11 @@
             <text x="-101" y="3" text-anchor="end">270</text>
           </g>
           <g class="emblem" id="emblem">
-            <path class="emblem__stroke emblem__c" d="M4.57 -22.29A30 30 0 1 0 4.57 22.29" />
-            <path class="emblem__stroke emblem__3" d="M16.91 -21.34A15 15 0 1 1 27.9 -0.23" />
-            <path class="emblem__stroke emblem__3" d="M27.9 0.23A15 15 0 1 1 16.91 21.34" />
+            <path class="emblem__stroke emblem__k" d="M-41.4 -33.6V33.6" />
+            <path class="emblem__stroke emblem__k" d="M-41.4 6L-9 -30.6" />
+            <path class="emblem__stroke emblem__k" d="M-26.8 -10.5L-7.8 31.8" />
+            <path class="emblem__stroke emblem__d" d="M11.1 -33.6V33.6" />
+            <path class="emblem__stroke emblem__d" d="M11.1 -29.1H14.7A29.1 29.1 0 0 1 14.7 29.1H11.1" />
           </g>
         </svg>
         <div class="intro__word" id="intro-word" aria-hidden="true"></div>
