@@ -377,6 +377,13 @@ a {
   text-align: right;
   margin: 0;
 }
+/* Keep the bottom HUD readable when the Sun or a bright planet sits behind it. */
+.readout,
+.hint {
+  text-shadow:
+    0 0 6px rgba(4, 6, 13, 0.92),
+    0 1px 2px rgba(4, 6, 13, 0.92);
+}
 .target {
   z-index: 6;
   pointer-events: none;

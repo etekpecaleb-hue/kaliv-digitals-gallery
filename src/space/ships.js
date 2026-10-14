@@ -154,7 +154,7 @@ export class Ships {
       [0, -5.2, 0.5, 6.6],
     ]
     this.courierPoints = this.courierShape.map(() => new Vector3())
-    this.moonDistance = 22
+    this.moonDistance = 42
     this.courierPath = new LoopPath(this.courierPoints, {
       samples: 14,
       speedAt: (x, y, z) => {

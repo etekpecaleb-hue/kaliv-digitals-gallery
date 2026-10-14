@@ -49,7 +49,7 @@ export const MOON = {
   kind: 'Moon',
   parent: 'home',
   radius: 1.4,
-  orbit: { a: 22, e: 0.055, i: 5.1, node: 125.1, peri: 83.3, L0: 218.3, period: 27.322 / 365.25 },
+  orbit: { a: 42, e: 0.055, i: 5.1, node: 125.1, peri: 83.3, L0: 218.3, period: 27.322 / 365.25 },
   rotationHours: 655.7,
   tilt: 6.7,
   color: '#c9c6bf',
