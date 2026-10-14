@@ -1,5 +1,10 @@
-// Heads-up display: top bar, bottom readout, corner ticks, the target
-// brackets that lock onto the hovered globe panel, and toasts.
+// Heads-up display: top bar (brand + the action button group), bottom
+// readout, corner ticks, the target brackets that lock onto the hovered globe
+// panel or sphere cell, and toasts.
+//
+// The action group (#hud-actions) holds square .hud-btn icon buttons:
+// [Blueprint] [Photos], then `hud.actionSlot` (#hud-actions-more), where the
+// navigation phase appends [Worlds] [Fly] (see addAction()).
 import { gsap } from 'gsap'
 import { formatLatLon, padIndex } from '../core/math.js'
 
@@ -13,6 +18,8 @@ export class Hud {
   targetLabel = byId('target-label')
   toastEl = byId('toast')
   hint = byId('hint')
+  buttons = { blueprint: byId('btn-blueprint'), photos: byId('btn-photos') }
+  actionSlot = byId('hud-actions-more')
   fields = {
     frames: byId('ro-frames'),
     aLabel: byId('ro-a-label'),
@@ -28,6 +35,7 @@ export class Hud {
   lastWrite = 0
   targetPanel = null
   toastTimer = 0
+  toastShown = false
 
   constructor(store, coarse) {
     this.store = store
@@ -38,7 +46,27 @@ export class Hud {
     this.fields.cLabel.textContent = 'In view'
     this.hint.textContent = coarse
       ? 'Drag to rotate · Pinch to zoom · Tap a photo'
-      : 'Drag to rotate · Scroll to zoom · Select a photo to open it'
+      : 'Drag to rotate · Scroll to zoom · B blueprint · P photos'
+  }
+
+  // Reflects the globe mode on the Blueprint toggle.
+  setBlueprint(on) {
+    this.buttons.blueprint.setAttribute('aria-pressed', String(on))
+  }
+
+  // Appends a header button in the action group's insertion point and
+  // returns it: { id, label, icon (svg markup), tip, pressed (toggle) }.
+  addAction({ id, label, icon, tip = label, pressed }) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'hud-btn'
+    button.id = id
+    button.dataset.tip = tip
+    button.setAttribute('aria-label', label)
+    if (pressed !== undefined) button.setAttribute('aria-pressed', String(pressed))
+    button.innerHTML = `${icon}<span class="hud-btn__label">${label}</span>`
+    this.actionSlot.append(button)
+    return button
   }
 
   reveal() {
@@ -76,6 +104,8 @@ export class Hud {
   }
 
   setDimmed(dimmed) {
+    // visible (if still transparent) straight away, so its buttons can take focus
+    if (!dimmed) gsap.set([this.top, this.bottom, this.frame], { visibility: 'inherit' })
     gsap.to([this.top, this.bottom, this.frame], {
       autoAlpha: dimmed ? 0 : 1,
       duration: dimmed ? 0.3 : 0.5,
@@ -124,19 +154,26 @@ export class Hud {
     }
   }
 
-  toast(message, isError = false) {
+  // `hold`: ms on screen (Infinity keeps it up until the next toast). A toast
+  // that is already showing just changes its text, so progress updates
+  // don't flicker.
+  toast(message, isError = false, hold = isError ? 6000 : 4200) {
     this.toastEl.textContent = message
     this.toastEl.classList.toggle('is-error', isError)
-    gsap.killTweensOf(this.toastEl)
-    gsap.fromTo(
-      this.toastEl,
-      { autoAlpha: 0, y: 10 },
-      { autoAlpha: 1, y: 0, duration: 0.35, ease: 'power2.out' },
-    )
+    if (!this.toastShown) {
+      gsap.killTweensOf(this.toastEl)
+      gsap.fromTo(
+        this.toastEl,
+        { autoAlpha: 0, y: 10 },
+        { autoAlpha: 1, y: 0, duration: 0.35, ease: 'power2.out' },
+      )
+    }
+    this.toastShown = true
     window.clearTimeout(this.toastTimer)
-    this.toastTimer = window.setTimeout(
-      () => gsap.to(this.toastEl, { autoAlpha: 0, duration: 0.4 }),
-      isError ? 6000 : 3800,
-    )
+    if (hold === Infinity) return
+    this.toastTimer = window.setTimeout(() => {
+      this.toastShown = false
+      gsap.to(this.toastEl, { autoAlpha: 0, duration: 0.4 })
+    }, hold)
   }
 }

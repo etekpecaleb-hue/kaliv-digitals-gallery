@@ -12,6 +12,10 @@ import { CELL_FRAGMENT, CELL_VERTEX } from './globeShaders.js'
 
 export const MIN_CELLS = 24
 export const MAX_CELLS = 240
+// Morph timing (t: 0 = blueprint, 1 = photo sphere): each cell grows over
+// GROW_SPAN, starting later the further it is from the equator.
+export const GROW_SPAN = 0.5
+const growStart = (lat) => 0.12 + 0.34 * (Math.abs(lat) / (Math.PI / 2))
 const TAU = Math.PI * 2
 const SIGNAL_HI = new Color('#9cc7ff')
 const RIM = new Color('#3f86ff')
@@ -91,6 +95,46 @@ export function assignPhotos(cells, photoCount) {
   return assigned
 }
 
+// One cell per photo (photos >= cells), each as close as possible to where
+// the blueprint shows that photo, so the morph can slide a panel into the
+// cell that shows the same photo. Greedy matching on the angular distance
+// between each cell and the nearest blueprint panel of each photo.
+// `anchors`: [{ normal (unit Vector3), photo (index) }].
+export function assignNearAnchors(cells, photoCount, anchors) {
+  const normals = cells.map((cell) => direction(Math.PI / 2 - cell.lat, cell.lon))
+  const closest = new Float32Array(cells.length * photoCount).fill(-2)
+  for (const anchor of anchors) {
+    for (let c = 0; c < cells.length; c++) {
+      const k = c * photoCount + anchor.photo
+      const dot = normals[c].dot(anchor.normal)
+      if (dot > closest[k]) closest[k] = dot
+    }
+  }
+  const pairs = []
+  for (let k = 0; k < closest.length; k++) if (closest[k] > -2) pairs.push(k)
+  pairs.sort((a, b) => closest[b] - closest[a])
+  const assigned = new Array(cells.length).fill(-1)
+  const used = new Uint8Array(photoCount)
+  let free = cells.length
+  for (const k of pairs) {
+    const c = Math.floor(k / photoCount)
+    const photo = k % photoCount
+    if (assigned[c] !== -1 || used[photo]) continue
+    assigned[c] = photo
+    used[photo] = 1
+    if (--free === 0) break
+  }
+  // photos the blueprint doesn't show fill whatever is left
+  let next = 0
+  for (let c = 0; c < cells.length; c++) {
+    if (assigned[c] !== -1) continue
+    while (used[next]) next++
+    assigned[c] = next
+    used[next] = 1
+  }
+  return assigned
+}
+
 function cellMaterial(cell, photo, texture, radius, shared) {
   const band = cell.kind === 'band'
   return new ShaderMaterial({
@@ -153,14 +197,19 @@ export class PhotoSphere {
   }
 
   // (Re)creates every cell for the store's photos: as many cells as photos,
-  // but at least MIN_CELLS (photos repeat) and at most MAX_CELLS.
-  build(store) {
+  // but at least MIN_CELLS (photos repeat) and at most MAX_CELLS. With
+  // `anchors` (the blueprint panels as { normal, photo index }) and a photo
+  // per cell, photos land near where the blueprint shows them.
+  build(store, anchors = null) {
     this.dispose()
     const photos = store.photos
     if (photos.length === 0) return
     const count = clamp(photos.length, MIN_CELLS, MAX_CELLS)
     this.partition = partitionSphere(count, { aspect: typicalAspect(photos) })
-    const assigned = assignPhotos(this.partition, photos.length)
+    const assigned =
+      anchors && photos.length >= count
+        ? assignNearAnchors(this.partition, photos.length, anchors)
+        : assignPhotos(this.partition, photos.length)
     const segments = count <= 60 ? 12 : count <= 140 ? 10 : 8
     const radius = this.radius
     this.cells = this.partition.map((cell, index) => {
@@ -191,6 +240,8 @@ export class PhotoSphere {
         // world-unit size, for the morph and the focus distance
         width: cap ? span * radius * 2 : (cell.phi1 - cell.phi0) * Math.sin(midTheta) * radius,
         height: cap ? span * radius * 2 : span * radius,
+        // when this cell starts growing in the morph
+        start: growStart(cell.lat),
         hover: 0,
       }
     })
@@ -249,8 +300,7 @@ export class PhotoSphere {
       let opacity = 1
       if (reduced) opacity = t
       else {
-        const start = 0.12 + 0.34 * (Math.abs(cell.lat) / (Math.PI / 2))
-        const p = clamp((t - start) / 0.5, 0, 1)
+        const p = clamp((t - cell.start) / GROW_SPAN, 0, 1)
         grow = 1 - Math.pow(1 - p, 3)
       }
       uniforms.uGrow.value = grow

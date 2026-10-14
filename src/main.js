@@ -1,5 +1,5 @@
-// Bootstrap: builds the stage, starfield, photo store, globe, HUD, lightbox
-// and intro, and wires them together.
+// Bootstrap: builds the stage, starfield, photo store, globe, HUD, lightbox,
+// Photos panel and intro, and wires them together.
 import './styles/main.css'
 import { gsap } from 'gsap'
 import { ScrambleTextPlugin } from 'gsap/ScrambleTextPlugin'
@@ -7,13 +7,14 @@ import { DrawSVGPlugin } from 'gsap/DrawSVGPlugin'
 import { loadFonts } from './core/fonts.js'
 import { Stage } from './core/stage.js'
 import { PHOTOS } from './data/photos.js'
-import { PhotoStore, toPhoto } from './gallery/photoStore.js'
+import { MAX_FILES, PhotoStore, toPhoto } from './gallery/photoStore.js'
 import { PhotoGlobe } from './gallery/globe.js'
 import { Intro } from './intro/intro.js'
 import { Starfield } from './space/starfield.js'
 import { setupFileDrop } from './ui/fileDrop.js'
 import { Hud } from './ui/hud.js'
 import { Lightbox } from './ui/lightbox.js'
+import { PhotosPanel } from './ui/photosPanel.js'
 
 gsap.registerPlugin(ScrambleTextPlugin, DrawSVGPlugin)
 
@@ -22,6 +23,23 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 const canvas = byId('scene')
 const photos = PHOTOS.map((entry) => toPhoto(entry, './'))
 const fonts = loadFonts()
+const BLUEPRINT_KEY = 'kaliv.blueprint'
+
+// The visitor's Blueprint choice (on unless they turned it off); storage may
+// be unavailable, so both directions are wrapped.
+function storedBlueprint() {
+  try {
+    return localStorage.getItem(BLUEPRINT_KEY) !== 'off'
+  } catch {
+    return true
+  }
+}
+
+function storeBlueprint(on) {
+  try {
+    localStorage.setItem(BLUEPRINT_KEY, on ? 'on' : 'off')
+  } catch {}
+}
 
 function plural(count, noun) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
@@ -56,8 +74,13 @@ function boot() {
   // The panel the lightbox is showing, so it can fly back to that exact panel.
   let shownPanel = null
   const hud = new Hud(store, stage.coarse)
-  const globe = new PhotoGlobe(stage, store, { reduced, onSelect: (panel) => void select(panel) })
+  const globe = new PhotoGlobe(stage, store, {
+    reduced,
+    blueprint: storedBlueprint(),
+    onSelect: (panel) => void select(panel),
+  })
   globe.build()
+  hud.setBlueprint(globe.blueprint)
   textures.then(() => globe.refreshTextures())
 
   function openLightbox(photo, rect) {
@@ -89,7 +112,7 @@ function boot() {
 
   let selecting = false
   async function select(panel) {
-    if (selecting || lightbox.isOpen) return
+    if (!panel || selecting || lightbox.isOpen) return
     selecting = true
     globe.interactive = false
     hud.trackTarget(null)
@@ -144,6 +167,67 @@ function boot() {
     if (!intro.active) hud.update(time, stage.fps, globe)
   })
 
+  // Blueprint on = the panel globe; off = the seamless photo sphere.
+  function setBlueprint(on) {
+    globe.setBlueprint(on)
+    hud.setBlueprint(on)
+    storeBlueprint(on)
+  }
+  hud.buttons.blueprint.addEventListener('click', () => setBlueprint(!globe.blueprint))
+
+  const photosPanel = new PhotosPanel(store, {
+    reduced,
+    // a thumbnail: close the panel, then the same flow as tapping the globe
+    onPick: (photo) => {
+      photosPanel.close()
+      void select(globe.panelFor(photo))
+    },
+    onUseMine: () => picker.openPicker(),
+    onRestore: () => void restoreOriginals(),
+  })
+  hud.buttons.photos.addEventListener('click', () => photosPanel.toggle(hud.buttons.photos))
+
+  // After a replace or a restore: rebuild both modes, scan the photos in,
+  // and refresh the panel (the HUD and lightbox read the store directly).
+  store.addEventListener('change', () => {
+    shownPanel = null
+    hud.trackTarget(null)
+    globe.build()
+    globe.refreshTextures()
+    globe.revealPhotos(store.photos)
+    photosPanel.render()
+  })
+
+  async function replacePhotos(files) {
+    if (store.busy) return
+    const many = files.length > 8
+    if (many) hud.toast(`Reading ${plural(files.length, 'file')}…`, false, Infinity)
+    const { added, skipped, ignored } = await store.replaceWith(files, {
+      onProgress: (done, total) => many && hud.toast(`Reading photos · ${done} / ${total}`, false, Infinity),
+    })
+    if (added.length === 0) {
+      hud.toast("Couldn't read those files, so the gallery is unchanged. Use JPG, PNG or WebP images.", true)
+      return
+    }
+    photosPanel.close()
+    const messages = [`Showing your ${plural(added.length, 'photo')}. They stay on this device and are never uploaded.`]
+    if (ignored > 0) messages.push(`Only the first ${MAX_FILES} images were used.`)
+    if (skipped.length > 0) {
+      const what = skipped.length === 1 ? skipped[0] : plural(skipped.length, 'file')
+      messages.push(`Skipped ${what} (couldn't read).`)
+    }
+    hud.toast(messages.join(' '), false, skipped.length > 0 ? 6500 : 4800)
+  }
+
+  async function restoreOriginals() {
+    if (await store.restoreOriginals()) hud.toast(`Showing the original ${plural(store.count, 'photo')}.`)
+  }
+
+  const picker = setupFileDrop(
+    (files) => void replacePhotos(files),
+    () => intro.active || lightbox.isOpen,
+  )
+
   addEventListener('keydown', (event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
     if (intro.active) {
@@ -156,7 +240,20 @@ function boot() {
     if (lightbox.isOpen) return
     const target = event.target
     if (target.closest('input, textarea, select')) return
-    const onPage = target === document.body || target === document.documentElement
+    const key = event.key.toLowerCase()
+    // B and P work from anywhere on the page (P also closes the panel)
+    if (key === 'p' && !event.repeat) {
+      event.preventDefault()
+      photosPanel.toggle(hud.buttons.photos)
+      return
+    }
+    if (photosPanel.isOpen) return
+    if (key === 'b' && !event.repeat) {
+      event.preventDefault()
+      setBlueprint(!globe.blueprint)
+      return
+    }
+    const onPage = target === document.body || target === document.documentElement || target === canvas
     if (!onPage || !globe.interactive) return
     const rotations = {
       ArrowLeft: [0.32, 0],
@@ -173,28 +270,10 @@ function boot() {
     }
   })
 
-  setupFileDrop(
-    async (files) => {
-      const { added, skipped } = await store.addFiles(files)
-      if (added.length > 0) {
-        globe.build()
-        globe.refreshTextures()
-        globe.revealPhotos(added)
-        const panel = globe.panelFor(added[0])
-        if (panel && globe.interactive) globe.focus(panel, false)
-      }
-      const messages = []
-      if (added.length > 0) {
-        messages.push(`Added ${plural(added.length, 'photo')}. They stay in this tab and are not uploaded.`)
-      }
-      if (skipped.length > 0) {
-        const what = skipped.length === 1 ? skipped[0] : plural(skipped.length, 'file')
-        messages.push(`Couldn't read ${what}. Use JPG, PNG or WebP images.`)
-      }
-      if (messages.length > 0) hud.toast(messages.join(' '), added.length === 0)
-    },
-    () => intro.active || lightbox.isOpen,
-  )
+  // ?debug=1: a handle for QA scripts (renderer stats, mode switches)
+  if (new URLSearchParams(location.search).has('debug')) {
+    window.gallery = { stage, globe, store, hud, lightbox, photosPanel, setBlueprint, replacePhotos }
+  }
 
   intro.start()
 }

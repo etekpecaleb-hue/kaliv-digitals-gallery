@@ -1,7 +1,12 @@
 // GLSL for the photo globe: photo panels, the blueprint core sphere, the
 // back-face atmosphere glow and the cells of the seamless photo sphere.
 
+// uWrap (morph only) pulls the panel onto the sphere of uWrapRadius around
+// uCentre, so a panel stretched to a sphere cell's size still hugs the globe.
 export const PANEL_VERTEX = `
+  uniform float uWrap;
+  uniform float uWrapRadius;
+  uniform vec3 uCentre;
   varying vec2 vUv;
   varying vec3 vNormalW;
   varying vec3 vViewW;
@@ -9,6 +14,11 @@ export const PANEL_VERTEX = `
     vUv = uv;
     vec4 world = modelMatrix * vec4(position, 1.0);
     vNormalW = normalize(mat3(modelMatrix) * normal);
+    if (uWrap > 0.0) {
+      vec3 radial = normalize(world.xyz - uCentre);
+      world.xyz = mix(world.xyz, uCentre + radial * uWrapRadius, uWrap);
+      vNormalW = normalize(mix(vNormalW, radial, uWrap));
+    }
     vViewW = cameraPosition - world.xyz;
     gl_Position = projectionMatrix * viewMatrix * world;
   }
@@ -205,7 +215,8 @@ export const CELL_FRAGMENT = `
     float along = uKind > 0.5 ? vLocal.y : 1.0 - vLocal.y;
     float scan = uReveal * 1.2 - 0.1;
     float shown = 1.0 - smoothstep(scan - 0.02, scan + 0.02, along);
-    float scanGlow = (1.0 - smoothstep(0.0, 0.08, abs(along - scan))) * step(0.001, uReveal) * step(uReveal, 0.999);
+    // cells are big, so their scan line is thinner than a panel's
+    float scanGlow = (1.0 - smoothstep(0.0, 0.035, abs(along - scan))) * step(0.001, uReveal) * step(uReveal, 0.999);
 
     vec2 uv = (vUv - 0.5) * (1.0 - 0.06 * uHover) + 0.5;
     vec3 photo = mix(uTone, texture2D(uMap, uv).rgb, uHasMap);
@@ -224,7 +235,7 @@ export const CELL_FRAGMENT = `
     col = mix(col, uSeamColor, seam * 0.92 * (1.0 - growing));
     col = mix(col, uSignal * 1.3, border * max(uHover, growing * 0.8));
     col += uRim * pow(1.0 - facing, 3.0) * 0.5;
-    col += uSignal * scanGlow * 0.9;
+    col += uSignal * scanGlow * 0.7;
     col *= (1.0 + 0.1 * uHover) * (1.0 - 0.7 * uDim) * uFade;
     gl_FragColor = vec4(col, uOpacity);
     #include <colorspace_fragment>

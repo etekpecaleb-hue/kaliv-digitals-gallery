@@ -1,13 +1,14 @@
-// "Add photos" button + drag and drop anywhere on the page. `onFiles` gets the
-// chosen File list; `isBlocked()` suspends drops (intro, lightbox open).
+// The hidden multi-file picker + drag and drop anywhere on the page. Both
+// hand the chosen File list to `onFiles` (which replaces the gallery);
+// `isBlocked()` suspends drops (intro, lightbox open). Returns
+// { openPicker() } — call it from a click handler (browsers only open the
+// picker for a user gesture).
 import { gsap } from 'gsap'
 
 export function setupFileDrop(onFiles, isBlocked) {
-  const button = document.getElementById('add-photos')
   const input = document.getElementById('file-input')
   const overlay = document.getElementById('drop')
 
-  button.addEventListener('click', () => input.click())
   input.addEventListener('change', () => {
     const files = [...(input.files ?? [])]
     input.value = ''
@@ -52,4 +53,6 @@ export function setupFileDrop(onFiles, isBlocked) {
     const files = [...(event.dataTransfer?.files ?? [])]
     if (files.length > 0) onFiles(files)
   })
+
+  return { openPicker: () => input.click() }
 }

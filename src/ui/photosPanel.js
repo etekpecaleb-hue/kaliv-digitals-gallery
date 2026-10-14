@@ -86,6 +86,8 @@ export class PhotosPanel {
   render() {
     const { photos, isCustom } = this.store
     const total = photos.length
+    // the focused action may be about to hide (Restore) or the grid rebuilt
+    const focused = this.sheet.panel.contains(document.activeElement) ? document.activeElement : null
     this.sheet.setTitle('Photos', `· ${total}`)
     this.status.textContent = isCustom
       ? `Your photos · ${total} · never uploaded`
@@ -121,6 +123,7 @@ export class PhotosPanel {
       return item
     })
     this.grid.replaceChildren(...items)
+    if (focused && (focused.hidden || !focused.isConnected)) this.useButton.focus({ preventScroll: true })
   }
 
   columns() {

@@ -28,13 +28,29 @@
         <span class="brand__word">Kaliv</span>
         <span class="brand__tag mono">Digitals</span>
       </a>
-      <div class="hud-top__actions">
-        <button class="add" type="button" id="add-photos" aria-label="Add photos" title="Add photos from your device">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" /></svg>
-          <span>Add photos</span>
+      <!-- One group of square 44 px icon buttons (labels on wide screens) -->
+      <nav class="hud-actions" id="hud-actions" aria-label="Gallery">
+        <button class="hud-btn" type="button" id="btn-blueprint" aria-pressed="true" aria-label="Blueprint" data-tip="Blueprint · B">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.2" />
+            <ellipse cx="8" cy="8" rx="2.6" ry="6.2" />
+            <path d="M1.8 8h12.4M2.9 4.6h10.2M2.9 11.4h10.2" />
+          </svg>
+          <span class="hud-btn__label">Blueprint</span>
         </button>
-        <input class="sr-only" type="file" id="file-input" accept="image/*" multiple tabindex="-1" aria-hidden="true" />
-      </div>
+        <button class="hud-btn" type="button" id="btn-photos" aria-label="Photos" aria-haspopup="dialog" aria-expanded="false" aria-controls="photos-sheet" data-tip="Photos · P">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="2" y="2" width="5" height="5" /><rect x="9" y="2" width="5" height="5" />
+            <rect x="2" y="9" width="5" height="5" /><rect x="9" y="9" width="5" height="5" />
+          </svg>
+          <span class="hud-btn__label">Photos</span>
+        </button>
+        <!-- INSERTION POINT (navigation phase): append the [Worlds] and [Fly]
+             .hud-btn buttons, in that order, into #hud-actions-more. It is
+             display: contents, so they join this row and its 8 px gap. -->
+        <div class="hud-actions__more" id="hud-actions-more"></div>
+      </nav>
+      <input class="sr-only" type="file" id="file-input" accept="image/*,.heic,.heif,.avif" multiple tabindex="-1" aria-hidden="true" />
     </header>
 
     <div class="hud hud-frame" aria-hidden="true">
@@ -50,7 +66,7 @@
         <div class="readout__item readout__item--wide"><dt id="ro-c-label">In view</dt><dd id="ro-c">—</dd></div>
         <div class="readout__item readout__item--fps"><dt>FPS</dt><dd id="ro-fps">60</dd></div>
       </dl>
-      <p class="hint mono" id="hint">Drag to rotate · Scroll to zoom · Select a photo to open it</p>
+      <p class="hint mono" id="hint">Drag to rotate · Scroll to zoom · B blueprint · P photos</p>
     </footer>
 
     <!-- Target brackets that lock onto the hovered globe panel -->
@@ -69,6 +85,7 @@
         <span class="corner corner--tl"></span><span class="corner corner--tr"></span>
         <span class="corner corner--bl"></span><span class="corner corner--br"></span>
         <span class="lightbox__scan" id="lb-scan"></span>
+        <span class="lightbox__progress" id="lb-progress" aria-hidden="true"><i></i></span>
       </div>
       <aside class="lightbox__meta" id="lb-meta">
         <p class="lightbox__index mono"><span id="lb-index">Frame 01 / 32</span><span class="chip" id="lb-category">Orbit</span></p>
@@ -89,7 +106,11 @@
           <button class="lb-btn" type="button" id="lb-next" aria-label="Next photo">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5L11.5 8 6 13.5" /></svg>
           </button>
-          <p class="lightbox__keys mono">← → browse · Esc close</p>
+          <button class="lb-btn lb-btn--play" type="button" id="lb-play" aria-pressed="false" aria-label="Play slideshow">
+            <svg class="lb-play__play" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3l8 5-8 5z" /></svg>
+            <svg class="lb-play__pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3v10M10.5 3v10" /></svg>
+          </button>
+          <p class="lightbox__keys mono">← → browse · Space play · Esc close</p>
         </div>
       </aside>
       <button class="lb-btn lb-btn--close" type="button" id="lb-close" aria-label="Close photo">
@@ -98,7 +119,7 @@
     </div>
 
     <div class="drop" id="drop" hidden>
-      <div class="drop__box"><p class="drop__title">Drop photos to add them</p><p class="drop__note mono">JPG · PNG · WebP · stays in this tab</p></div>
+      <div class="drop__box"><p class="drop__title">Drop photos to replace the gallery</p><p class="drop__note mono">JPG · PNG · WebP · stays on this device</p></div>
     </div>
     <div class="toast mono" id="toast" role="status" aria-live="polite"></div>
 

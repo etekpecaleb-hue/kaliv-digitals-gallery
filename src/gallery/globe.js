@@ -84,6 +84,9 @@ function panelMaterial({ texture, tone, panelAspect, imageAspect, shared }) {
       uReveal: { value: 1 },
       uDim: { value: 0 },
       uOpacity: { value: 1 },
+      uWrap: { value: 0 },
+      uWrapRadius: { value: RADIUS },
+      uCentre: shared.uCentre,
       uFade: shared.uFade,
     },
     vertexShader: PANEL_VERTEX,
@@ -214,6 +217,8 @@ export class PhotoGlobe {
     // optional day/night on the photo sphere: world-space sun direction
     uSunDir: { value: new Vector3(1, 0, 0) },
     uDayNight: { value: 0 },
+    // the globe's world-space centre (the morph wraps panels around it)
+    uCentre: { value: new Vector3() },
   }
   view = { pitch: REST_PITCH, yaw: 0, distance: 18 }
   goal = { pitch: REST_PITCH, yaw: 0, distance: 18 }
@@ -381,7 +386,8 @@ export class PhotoGlobe {
       }
     })
     this.buildPolarBadges()
-    this.sphere.build(this.store)
+    const anchors = this.blueprintPanels.map((panel, index) => ({ normal: panel.normal, photo: order[index] }))
+    this.sphere.build(this.store, anchors)
     this.planMorph()
     this.applyMorph()
     this.updateFit()
@@ -646,22 +652,43 @@ export class PhotoGlobe {
     gsap.to(this.shared.uDayNight, { value: direction ? strength : 0, duration: 0.6, overwrite: true })
   }
 
-  // Where every blueprint panel slides to: the sphere cell under its centre,
-  // with the scale that makes it that cell's size.
+  // Where every blueprint panel goes in the morph. For each cell, the nearest
+  // panel showing the same photo "carries" it: it slides onto the cell and
+  // stretches to its size while the cell grows underneath, then hands over.
+  // Every other panel drifts towards the cell under it, shrinks and fades.
   planMorph() {
+    const { panelWidth, panelHeight } = this.layout.options
+    const carriers = new Map()
+    for (const cell of this.sphere.cells) {
+      let best = null
+      let bestDot = 0.8
+      for (const panel of this.blueprintPanels) {
+        if (panel.photo !== cell.photo || carriers.has(panel)) continue
+        const dot = panel.normal.dot(cell.normal)
+        if (dot > bestDot) {
+          best = panel
+          bestDot = dot
+        }
+      }
+      if (best) carriers.set(best, cell)
+    }
     for (const panel of this.blueprintPanels) {
-      const cell = this.sphere.cellAt(panel.normal)
+      const carried = carriers.get(panel)
+      const cell = carried ?? this.sphere.cellAt(panel.normal)
       if (!cell) {
         panel.target = null
         continue
       }
-      const { panelWidth, panelHeight } = this.layout.options
       const cap = cell.kind === 'cap'
+      // a flat-ish panel can't cover a whole round cap: it settles inside it
+      const fit = cap ? 0.62 : 1
       panel.target = {
+        carrier: Boolean(carried),
+        start: cell.start,
         lat: cap ? Math.sign(cell.lat) * (Math.PI / 2 - 0.02) : cell.lat,
         dLon: cap ? 0 : wrap(cell.lon - panel.lon, -Math.PI, Math.PI),
-        scaleX: clamp(cell.width / panelWidth, 0.6, 2.4),
-        scaleY: clamp(cell.height / panelHeight, 0.6, 2.4),
+        scaleX: carried ? clamp((cell.width * fit) / panelWidth, 0.6, 2.6) : 0.6,
+        scaleY: carried ? clamp((cell.height * fit) / panelHeight, 0.6, 2.6) : 0.6,
       }
     }
   }
@@ -688,16 +715,28 @@ export class PhotoGlobe {
   }
 
   morphPanel(panel, t, reduced) {
-    const { mesh } = panel
+    const { mesh, target } = panel
     const material = mesh.material
-    // equator rows move first, the rows nearest the poles last
-    const p = reduced ? t : clamp((t - 0.3 * Math.min(1, Math.abs(panel.lat))) / 0.6, 0, 1)
-    const opacity = reduced ? 1 - t : 1 - smooth(p, 0.45, 0.95)
+    const start = target ? target.start : 0.3
+    let p
+    let opacity
+    if (reduced) {
+      p = t
+      opacity = 1 - t
+    } else if (target?.carrier) {
+      // arrives just as its cell starts to grow and stays until it is full
+      p = clamp((t - (start - 0.12)) / 0.36, 0, 1)
+      opacity = 1 - smooth(t, start + 0.34, start + 0.48)
+    } else {
+      p = clamp((t - (start - 0.12)) / 0.4, 0, 1)
+      opacity = 1 - smooth(p, 0.25, 0.85)
+    }
     material.uniforms.uOpacity.value = opacity
     material.transparent = opacity < 1
     material.alphaToCoverage = !material.transparent
     mesh.visible = opacity > 0.002
-    if (p === 0 || !panel.target) {
+    material.uniforms.uWrap.value = 0
+    if (p === 0 || !target) {
       mesh.position.copy(panel.basePosition)
       mesh.quaternion.copy(panel.baseQuaternion)
       mesh.scale.setScalar(1)
@@ -709,14 +748,18 @@ export class PhotoGlobe {
       return
     }
     const e = easeSlide(p)
-    const target = panel.target
-    const lat = lerp(panel.lat, target.lat, e)
-    const lon = panel.lon + target.dLon * e
+    // non-carriers only drift part of the way before they are gone
+    const reach = target.carrier ? e : e * 0.6
+    const lat = lerp(panel.lat, target.lat, reach)
+    const lon = panel.lon + target.dLon * reach
     // arcs up off the surface on the way, then settles just above the cell
-    const lift = 1.012 + 0.05 * Math.sin(Math.PI * e)
+    // (carriers on top, so they win wherever panels overlap)
+    const lift = target.carrier ? 1.012 + 0.03 * Math.sin(Math.PI * e) : 1.006 + 0.016 * Math.sin(Math.PI * e)
     mesh.position.set(...latLonToXYZ(lat, lon, RADIUS * lift))
     mesh.quaternion.setFromEuler(morphEuler.set(panel.lat - lat, lon, 0, 'YXZ'))
     mesh.scale.set(lerp(1, target.scaleX, e), lerp(1, target.scaleY, e), 1)
+    material.uniforms.uWrap.value = e
+    material.uniforms.uWrapRadius.value = RADIUS * lift
   }
 
   // Intro hand-over in photo-sphere mode: cells fall onto the sphere from
@@ -1042,6 +1085,7 @@ export class PhotoGlobe {
   update(time, dt) {
     this.shared.uTime.value = time
     if (!this.root.visible) return
+    this.shared.uCentre.value.copy(this.root.position)
 
     if (!this.drag.active && !this.focusing) {
       // inertia after a fling
