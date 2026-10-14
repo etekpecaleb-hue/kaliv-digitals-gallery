@@ -50,14 +50,17 @@ system.update(time, dt)
 
 Phone (`coarse`): ≤ 170 draw calls, ≤ 700k triangles, bakes 512×256 per body
 (1024×512 on desktop, half that for dwarf planets), no full-screen passes, no
-per-frame allocations. Measured in the harness, coarse, 1280×800:
+per-frame allocations. Measured in the harness (all subsystems on):
 
-| View | Calls | Triangles | Baked textures |
+| View | Coarse, 390×844 phone | Coarse, 1280×800 | Desktop, 1280×800 |
 | --- | --- | --- | --- |
-| Home, dist 18 | 34 | 95k | 18 MB |
-| Whole system, dist 2600 | 53 | 134k | 18 MB |
+| Home, dist 18 | 30 calls, 85k tris | 35 calls, 96k tris | 31 calls, 205k tris |
+| Whole system, dist 2600 | 45 calls, 114k tris | 55 calls, 134k tris | 48 calls, 278k tris |
+| Baked textures | 17.5 MB | 17.5 MB | 48.9 MB |
 
-Desktop (not coarse) home view: 32 calls, 206k triangles, 49 MB of bakes.
+`renderer.info.memory.textures` reads 26–29; after `system.dispose()` it
+drops to 1 (three's shared PBR lookup table, not ours) and geometries to the
+caller's own.
 
 ## Harness
 
