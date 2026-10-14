@@ -309,3 +309,32 @@ export const SECONDS_PER_YEAR = 20 * 60
 // Visual seconds for one 24-hour day at 1× time; other rotations scale from it.
 export const SECONDS_PER_DAY = 60
 export const TIME_SCALES = [0, 1, 10, 100]
+
+// The spacecraft round home (src/space/ships.js), for the Worlds panel and
+// the info card. `short` is the one-line route in the list.
+export const SHIP_INFO = {
+  shuttle: {
+    kind: 'Ship',
+    short: 'Low orbit',
+    blurb: 'A crew shuttle in low orbit, skimming a few radii above the photos.',
+    facts: { route: 'Low orbit round the gallery', lap: '70 seconds', crew: 'Shuttle class' },
+  },
+  courier: {
+    kind: 'Ship',
+    short: 'Moon run',
+    blurb: 'A fast courier running loops out round the Moon and back.',
+    facts: { route: 'Gallery ⇄ Moon', lap: 'About a minute', crew: 'Courier class' },
+  },
+  cruiser: {
+    kind: 'Ship',
+    short: 'Mars · Jupiter',
+    blurb: 'A heavy cruiser on the long haul: Mars, Jupiter, then home again.',
+    facts: { route: 'Gallery → Mars → Jupiter', lap: 'Long haul', crew: 'Cruiser class' },
+  },
+  station: {
+    kind: 'Station',
+    short: 'Lunar orbit',
+    blurb: 'A ring station on a steep orbit round the Moon.',
+    facts: { route: 'Orbiting the Moon', lap: '50 seconds', crew: 'Ring station' },
+  },
+}

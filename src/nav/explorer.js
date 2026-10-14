@@ -70,6 +70,12 @@ function anglesOf(direction, out) {
   return out
 }
 
+// One axis of the view shift, eased (instant under reduced motion).
+function easeShift(value, goal, reduced, dt) {
+  const next = reduced ? goal : damp(value, goal, 4, dt)
+  return Math.abs(next - goal) < 0.25 ? goal : next
+}
+
 // `angle` shifted by whole turns to lie nearest `reference`.
 function nearestAngle(angle, reference) {
   return angle + Math.round((reference - angle) / TAU) * TAU
@@ -109,9 +115,9 @@ export class Explorer {
   hovering = false
   // nearest solid surface to the camera, refreshed every frame
   nearest = { body: null, surface: Infinity }
-  // CSS px the focus is lifted by (camera view offset), e.g. above a bottom card
-  viewShift = 0
-  viewShiftGoal = 0
+  // CSS px the picture is shifted by (a camera view offset), e.g. to keep the
+  // focus clear of the info card: x < 0 moves it right, y > 0 lifts it
+  shift = { x: 0, y: 0, goalX: 0, goalY: 0 }
   listeners = { focus: new Set(), travel: new Set(), mode: new Set() }
   centerOut = { lat: 0, lon: 0 }
   homeFit = 18
@@ -199,7 +205,7 @@ export class Explorer {
 
   // How big a target looks from its resting distance (Saturn with its rings).
   extentOf(target) {
-    if (target.def?.rings?.style === 'saturn') return target.def.rings.outer * 0.86
+    if (target.def?.rings?.style === 'saturn') return target.def.rings.outer
     if (!target.def) return target.radius * 1.6
     return this.solidRadius(target)
   }
@@ -250,8 +256,8 @@ export class Explorer {
     const halfHeight = this.stage.height / 2
     const focal = halfHeight / Math.tan(MathUtils.degToRad(camera.fov / 2))
     if (depth > 1e-6) {
-      out.x = (inView.x / depth) * focal + this.stage.width / 2
-      out.y = (-inView.y / depth) * focal + halfHeight - this.viewShift
+      out.x = (inView.x / depth) * focal + this.stage.width / 2 - this.shift.x
+      out.y = (-inView.y / depth) * focal + halfHeight - this.shift.y
     }
     return depth
   }
@@ -355,7 +361,9 @@ export class Explorer {
       drag.moved = false
       drag.startX = drag.lastX = event.clientX
       drag.startY = drag.lastY = event.clientY
-      drag.lastT = drag.downT = performance.now()
+      drag.lastT = performance.now()
+      // the event's own timestamp, so slow frames don't turn a tap into a hold
+      drag.downT = event.timeStamp
       this.velocity.yaw = this.velocity.pitch = 0
     } else if (this.pointers.size === 2 && this.mode === 'orbit') {
       const [a, b] = this.pointers.values()
@@ -431,7 +439,7 @@ export class Explorer {
       return
     }
     this.canvas.classList.remove('is-dragging')
-    const tap = !drag.moved && performance.now() - drag.downT < TAP_MS
+    const tap = !drag.moved && event.timeStamp - drag.downT < TAP_MS
     drag.active = false
     drag.moved = false
     // a drag that stopped before release shouldn't fling
@@ -525,9 +533,9 @@ export class Explorer {
     }
     this.homeFit = fit
     this.goal.distance = this.clampDistance(this.goal.distance)
-    if (this.viewShift !== 0) {
+    if (this.shift.x !== 0 || this.shift.y !== 0) {
       const { width, height } = this.stage
-      this.camera.setViewOffset(width, height, 0, this.viewShift, width, height)
+      this.camera.setViewOffset(width, height, this.shift.x, this.shift.y, width, height)
     }
   }
 
@@ -924,18 +932,22 @@ export class Explorer {
     }
   }
 
-  // Lifts the focus by `px` CSS pixels (e.g. above a bottom card on phones).
-  setViewShift(px) {
-    this.viewShiftGoal = px
+  // Shifts the picture by (x, y) CSS px, eased: (0, 120) lifts the focus
+  // above a bottom card, (-170, 0) moves it right of a side card.
+  setViewShift(x, y) {
+    this.shift.goalX = x
+    this.shift.goalY = y
   }
 
   updateViewShift(dt) {
-    const eased = this.reduced ? this.viewShiftGoal : damp(this.viewShift, this.viewShiftGoal, 4, dt)
-    const shift = Math.abs(eased - this.viewShiftGoal) < 0.25 ? this.viewShiftGoal : eased
-    if (shift === this.viewShift) return
-    this.viewShift = shift
+    const shift = this.shift
+    const x = easeShift(shift.x, shift.goalX, this.reduced, dt)
+    const y = easeShift(shift.y, shift.goalY, this.reduced, dt)
+    if (x === shift.x && y === shift.y) return
+    shift.x = x
+    shift.y = y
     const { width, height } = this.stage
-    if (shift === 0) this.camera.clearViewOffset()
-    else this.camera.setViewOffset(width, height, 0, shift, width, height)
+    if (x === 0 && y === 0) this.camera.clearViewOffset()
+    else this.camera.setViewOffset(width, height, x, y, width, height)
   }
 }

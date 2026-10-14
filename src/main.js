@@ -10,12 +10,16 @@ import { gsap } from 'gsap'
 import { ScrambleTextPlugin } from 'gsap/ScrambleTextPlugin'
 import { DrawSVGPlugin } from 'gsap/DrawSVGPlugin'
 import { loadFonts } from './core/fonts.js'
+import { clamp } from './core/math.js'
+import { AdaptiveQuality } from './core/quality.js'
 import { Stage } from './core/stage.js'
 import { PHOTOS } from './data/photos.js'
+import { TIME_SCALES } from './data/worlds.js'
 import { MAX_FILES, PhotoStore, toPhoto } from './gallery/photoStore.js'
 import { PhotoGlobe } from './gallery/globe.js'
 import { Intro } from './intro/intro.js'
 import { Explorer, HOME_NEAR } from './nav/explorer.js'
+import { FlightControls } from './nav/joystick.js'
 import { Belts } from './space/belts.js'
 import { SpaceEffects } from './space/effects.js'
 import { createPlanetVisuals } from './space/planets.js'
@@ -26,8 +30,12 @@ import { Starfield } from './space/starfield.js'
 import { SunCorona } from './space/sun.js'
 import { setupFileDrop } from './ui/fileDrop.js'
 import { Hud } from './ui/hud.js'
+import { InfoCard } from './ui/infoCard.js'
+import { Labels } from './ui/labels.js'
 import { Lightbox } from './ui/lightbox.js'
 import { PhotosPanel } from './ui/photosPanel.js'
+import { Sheet } from './ui/sheet.js'
+import { WorldsPanel } from './ui/worldsPanel.js'
 
 gsap.registerPlugin(ScrambleTextPlugin, DrawSVGPlugin)
 
@@ -36,7 +44,13 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 const canvas = byId('scene')
 const photos = PHOTOS.map((entry) => toPhoto(entry, './'))
 const fonts = loadFonts()
+const params = new URLSearchParams(location.search)
 const BLUEPRINT_KEY = 'kaliv.blueprint'
+const PHONE = matchMedia('(max-width: 640px)')
+
+const WORLDS_ICON =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.5" /><ellipse cx="8" cy="8" rx="6.6" ry="2.7" transform="rotate(-24 8 8)" /><circle cx="13.4" cy="4.9" r="0.9" /></svg>'
+const FLY_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l4.8 12.2L8 11l-4.8 2.8z" /><path d="M8 11v3.4" /></svg>'
 
 // The visitor's Blueprint choice (on unless they turned it off); storage may
 // be unavailable, so both directions are wrapped.
@@ -51,6 +65,22 @@ function storedBlueprint() {
 function storeBlueprint(on) {
   try {
     localStorage.setItem(BLUEPRINT_KEY, on ? 'on' : 'off')
+  } catch {}
+}
+
+// A stored on/off preference (orbits, labels); storage may be unavailable.
+function storedFlag(key, fallback) {
+  try {
+    const value = localStorage.getItem(key)
+    return value === null ? fallback : value === 'on'
+  } catch {
+    return fallback
+  }
+}
+
+function storeFlag(key, on) {
+  try {
+    localStorage.setItem(key, on ? 'on' : 'off')
   } catch {}
 }
 
@@ -147,7 +177,8 @@ async function boot() {
     system,
     globe,
     reduced,
-    isBlocked: () => intro.active || lightbox.isOpen || selecting,
+    // the intro, the lightbox, an open sheet or a photo being opened hold the input
+    isBlocked: () => intro.active || lightbox.isOpen || selecting || Sheet.current !== null,
     onTap: (x, y) => routeTap(x, y),
   })
   globe.attachCamera(explorer)
@@ -160,12 +191,13 @@ async function boot() {
       if (panel) return void select(panel)
     }
     const target = explorer.pick(x, y)
-    if (!target) return
-    if (target === system.home) {
-      if (!explorer.atHome) void explorer.goHome()
-    } else if (target !== explorer.focus || explorer.mode === 'fly') {
-      void explorer.flyTo(target)
-    }
+    if (target && (target !== explorer.focus || explorer.mode === 'fly' || !explorer.atHome)) flyTo(target)
+  }
+
+  function flyTo(target) {
+    if (!target || !explorer.enabled) return
+    if (target === system.home) void explorer.goHome()
+    else void explorer.flyTo(target)
   }
 
   // Globe hover/picking only at home, close in, when nothing else has the input.
@@ -275,7 +307,7 @@ async function boot() {
     nav.mode = explorer.mode === 'fly' ? 'fly' : explorer.atHome || (focus === system.home && explorer.view.distance < HOME_NEAR) ? 'home' : 'space'
     nav.range = explorer.mode === 'fly' ? explorer.nearest.surface : explorer.view.distance
     nav.focusName = focus.name
-    nav.timeScale = system.timeScale
+    nav.timeScale = system.ctx.timeScale
     nav.speed = explorer.fly.speed
     nav.nearestName = explorer.nearest.body?.name ?? '—'
     hud.update(time, stage.fps, globe, nav)
@@ -292,8 +324,10 @@ async function boot() {
   const photosPanel = new PhotosPanel(store, {
     reduced,
     // a thumbnail: close the panel, then the same flow as tapping the globe
-    onPick: (photo) => {
+    // away from home (or flying), it flies home first
+    onPick: async (photo) => {
       photosPanel.close()
+      if (!explorer.atHome && !(await explorer.goHome())) return
       void select(globe.panelFor(photo))
     },
     onUseMine: () => picker.openPicker(),
@@ -343,6 +377,128 @@ async function boot() {
     () => intro.active || lightbox.isOpen,
   )
 
+  // ---------------------------------------------------------------------------
+  // Space navigation: the Worlds and Fly header buttons, the Worlds panel, the
+  // info card, the labels and the free-flight controls.
+  const worldsButton = hud.addAction({ id: 'btn-worlds', label: 'Worlds', icon: WORLDS_ICON, tip: 'Worlds · M' })
+  worldsButton.setAttribute('aria-haspopup', 'dialog')
+  worldsButton.setAttribute('aria-controls', 'worlds-sheet')
+  worldsButton.setAttribute('aria-expanded', 'false')
+  const flyButton = hud.addAction({ id: 'btn-fly', label: 'Fly', icon: FLY_ICON, tip: 'Fly · F', pressed: false })
+
+  const worldsPanel = new WorldsPanel(system, {
+    reduced,
+    timeScales: TIME_SCALES,
+    onPick: (target) => {
+      worldsPanel.close({ restoreFocus: false })
+      flyTo(target)
+    },
+    onTimeScale: (scale) => setTimeScale(scale),
+    onOrbits: (on) => setOrbits(on),
+    onLabels: (on) => setLabels(on),
+  })
+  worldsButton.addEventListener('click', () => worldsPanel.toggle(worldsButton))
+
+  // reduced motion runs the clocks at 1× at most (the system clamps them)
+  const timeScales = reduced ? TIME_SCALES.filter((scale) => scale <= 1) : TIME_SCALES
+  function setTimeScale(scale) {
+    if (!timeScales.includes(scale)) return
+    system.setTimeScale(scale)
+    worldsPanel.setTimeScale(scale)
+  }
+  function stepTimeScale(direction) {
+    const index = timeScales.indexOf(system.timeScale)
+    setTimeScale(timeScales[clamp(index + direction, 0, timeScales.length - 1)])
+  }
+  setTimeScale(1)
+
+  const labels = new Labels({ explorer, system, coarse, onSelect: (target) => flyTo(target) })
+  function setOrbits(on) {
+    system.setOrbitsVisible(on)
+    worldsPanel.setOrbits(on)
+    storeFlag('kaliv.orbits', on)
+  }
+  function setLabels(on) {
+    labels.setVisible(on)
+    worldsPanel.setLabels(on)
+    storeFlag('kaliv.labels', on)
+  }
+  setOrbits(storedFlag('kaliv.orbits', true))
+  setLabels(storedFlag('kaliv.labels', true))
+  // labels show out in space (never over the photos at home, close in)
+  stage.onFrame(() => {
+    const out = explorer.mode === 'fly' || explorer.traveling || explorer.focus !== system.home || explorer.view.distance >= HOME_NEAR
+    labels.setActive(!intro.active && explorer.enabled && out && !lightbox.isOpen)
+    labels.focus = explorer.mode === 'fly' ? null : currentFocus()
+    labels.update()
+  }, 5)
+
+  // "Next world" runs out from the Sun; ships cycle among themselves
+  const nextOrder = ['sun', 'mercury', 'venus', 'moon', 'mars', 'ceres', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'haumea', 'makemake', 'eris'].map((id) => system.bodyById(id))
+  const ships = system.ships?.list ?? []
+  function nextAfter(target) {
+    const list = ships.includes(target) ? ships : nextOrder
+    return list[(list.indexOf(target) + 1) % list.length]
+  }
+  const currentFocus = () => explorer.travel?.to ?? explorer.focus
+
+  const infoCard = new InfoCard({
+    reduced,
+    onHome: () => flyTo(system.home),
+    onNext: () => flyTo(nextAfter(currentFocus())),
+  })
+
+  // The info card shows whenever the focus is not home; on phones the focus
+  // is lifted above it, on desktop moved right of it.
+  function syncFocusUI() {
+    const focus = currentFocus()
+    worldsPanel.setFocus(focus)
+    const show = explorer.mode === 'orbit' && focus !== system.home && !lightbox.isOpen
+    if (show) infoCard.show(focus)
+    else infoCard.hide()
+    if (!show) explorer.setViewShift(0, 0)
+    else if (PHONE.matches) {
+      const header = 72
+      const cardTop = infoCard.root.offsetTop
+      explorer.setViewShift(0, Math.max(0, Math.round(stage.height / 2 - (header + cardTop) / 2)))
+    } else {
+      const right = infoCard.root.offsetLeft + infoCard.root.offsetWidth
+      explorer.setViewShift(-Math.round(right / 2), 0)
+    }
+  }
+  explorer.onFocusChange(syncFocusUI)
+  explorer.onTravel(syncFocusUI)
+  PHONE.addEventListener('change', syncFocusUI)
+  stage.onResize(() => syncFocusUI())
+
+  const flight = new FlightControls({ input: explorer.input, coarse, onExit: () => explorer.exitFly() })
+  function toggleFly() {
+    if (!explorer.enabled || selecting) return
+    if (Sheet.current) Sheet.current.close({ restoreFocus: false })
+    explorer.toggleFly()
+  }
+  flyButton.addEventListener('click', () => toggleFly())
+  explorer.onModeChange((mode) => {
+    flyButton.setAttribute('aria-pressed', String(mode === 'fly'))
+    if (mode === 'fly') flight.show()
+    else flight.hide()
+    syncFocusUI()
+  })
+
+  // the brand mark flies home
+  byId('brand').addEventListener('click', (event) => {
+    event.preventDefault()
+    if (Sheet.current) Sheet.current.close()
+    if (!explorer.atHome) flyTo(system.home)
+  })
+
+  // Adaptive quality: a lower pixel ratio while the frame rate stays low
+  // (?aq=0 turns it off for QA screenshots).
+  const quality = new AdaptiveQuality(stage, { enabled: params.get('aq') !== '0' })
+  stage.onFrame(() => {
+    if (!intro.active) quality.update()
+  }, 20)
+
   addEventListener('keydown', (event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
     if (intro.active) {
@@ -356,16 +512,43 @@ async function boot() {
     const target = event.target
     if (target.closest('input, textarea, select')) return
     const key = event.key.toLowerCase()
-    // B and P work from anywhere on the page (P also closes the panel)
+    // P and M work from anywhere on the page (and close their own panel)
     if (key === 'p' && !event.repeat) {
       event.preventDefault()
       photosPanel.toggle(hud.buttons.photos)
       return
     }
-    if (photosPanel.isOpen) return
+    if (key === 'm' && !event.repeat) {
+      event.preventDefault()
+      worldsPanel.toggle(worldsButton)
+      return
+    }
+    // [ and ] step the time scale, even with the Worlds panel open
+    if ((event.key === '[' || event.key === ']') && !photosPanel.isOpen) {
+      event.preventDefault()
+      stepTimeScale(event.key === ']' ? 1 : -1)
+      return
+    }
+    if (Sheet.current) return
+    // Esc (after the lightbox and the sheets have had it) leaves free flight
+    if (event.key === 'Escape' && explorer.mode === 'fly') {
+      event.preventDefault()
+      explorer.exitFly()
+      return
+    }
     if (key === 'b' && !event.repeat) {
       event.preventDefault()
       setBlueprint(!globe.blueprint)
+      return
+    }
+    if (key === 'f' && !event.repeat) {
+      event.preventDefault()
+      toggleFly()
+      return
+    }
+    if (key === 'g' && !event.repeat) {
+      event.preventDefault()
+      if (!explorer.atHome) flyTo(system.home)
       return
     }
     const onPage = target === document.body || target === document.documentElement || target === canvas
@@ -390,12 +573,31 @@ async function boot() {
   })
 
   // ?debug=1: a handle for QA scripts (renderer stats, mode switches)
-  if (new URLSearchParams(location.search).has('debug')) {
+  if (params.has('debug')) {
     const stats = () => {
       const { render, memory } = stage.renderer.info
       return { calls: render.calls, triangles: render.triangles, geometries: memory.geometries, textures: memory.textures, pixelRatio: stage.pixelRatio, near: stage.camera.near, buildMs: Math.round(buildMs), pendingBakes: visuals.baker.pending }
     }
-    window.gallery = { stage, globe, store, hud, lightbox, photosPanel, setBlueprint, replacePhotos, system, explorer, visuals, stats }
+    window.gallery = {
+      stage,
+      globe,
+      store,
+      hud,
+      lightbox,
+      photosPanel,
+      setBlueprint,
+      replacePhotos,
+      system,
+      explorer,
+      visuals,
+      worldsPanel,
+      infoCard,
+      labels,
+      quality,
+      flyTo: (id) => flyTo(system.bodyById(id) ?? ships.find((ship) => ship.id === id)),
+      setTimeScale,
+      stats,
+    }
   }
 
   intro.start()
